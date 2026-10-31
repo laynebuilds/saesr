@@ -1,26 +1,23 @@
-"""Print every snapshot a Site broadcasts. The same stream a dashboard socket receives.
+"""Print every SiteState the Site actor broadcasts. The same stream a dashboard socket receives.
 
-    cd durable && PYTHONPATH=. uv run python scripts/watch_site.py [site-id] [max-messages]
+    cd durable && uv run python scripts/watch_site.py [site-id] [max-messages]
 """
+import json
 import sys
 
-from generated import actors
+from durable_actors import Client
+from websockets.sync.client import connect
 
-site_id = sys.argv[1] if len(sys.argv) > 1 else "demo-warehouse"
+site_id = sys.argv[1] if len(sys.argv) > 1 else "site-demo"
 limit = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 
-site = actors.Site.get(site_id)
-with site.connect(actors.Site.Metadata(name="watch_site.py")) as socket:
-    for n, message in enumerate(socket, 1):
-        snap = getattr(message, "snapshot", None)
-        if snap is None:
-            print("other message:", message, flush=True)
-        else:
-            print(
-                f"[{message.reason}] v{snap.version} total={snap.total} score={snap.compliance_score} "
-                f"open={snap.open_alerts_count} by_camera={snap.by_camera} "
-                f"cameras={ {k: v.online for k, v in snap.cameras.items()} } event={message.event_id}",
-                flush=True,
-            )
+grant = Client().prepare_websocket("Site", site_id, {"name": "watch_site.py"})
+with connect(grant.websocket_url) as ws:
+    n = 0
+    while True:
+        s = json.loads(ws.recv())
+        n += 1
+        cams = {c["camera_id"]: (c["status"], c["version"], c["compliance_score"]) for c in s["cameras"]}
+        print(f"score={s['site_score']} active={s['active_incidents']} fixes={s['autonomous_fixes']} cameras={cams}", flush=True)
         if limit and n >= limit:
             break

@@ -1,74 +1,42 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, TypeAlias
-from typing import Annotated, Literal
+from durable_actors.generated import UNSET as _UNSET, Unset as _Unset, is_unset as _is_unset
+from typing import Annotated, Literal, Optional, Union
 from pydantic import Field
 from durable_actors.generated import ClientModel
 from typing_extensions import TypeAliasType
+if TYPE_CHECKING:
+    Severity: TypeAlias = Annotated[int, Field(ge=1, le=5, title='Severity')]
+else:
+    Severity = TypeAliasType('Severity', Annotated[int, Field(ge=1, le=5, title='Severity')])
+if TYPE_CHECKING:
+    JsonValueInput: TypeAlias = Optional[Union[str, int, float, bool, list['JsonValueInput'], dict[str, 'JsonValueInput']]]
+else:
+    JsonValueInput = TypeAliasType('JsonValueInput', Optional[Union[str, int, float, bool, list['JsonValueInput'], dict[str, 'JsonValueInput']]])
+if TYPE_CHECKING:
+    JsonValueOutput: TypeAlias = Optional[Union[str, int, float, bool, list['JsonValueOutput'], dict[str, 'JsonValueOutput']]]
+else:
+    JsonValueOutput = TypeAliasType('JsonValueOutput', Optional[Union[str, int, float, bool, list['JsonValueOutput'], dict[str, 'JsonValueOutput']]])
 
-class CameraInfo(ClientModel):
-    """
-    Per-camera status as seen by the Site (updated when a camera goes online or offline).
-    """
-    camera: Annotated[str, Field(title='Camera')]
-    online: Annotated[bool, Field(title='Online')]
-    fps: Annotated[float | None, Field(title='Fps')] = None
-    last_seen_at: Annotated[str | None, Field(title='Last Seen At')] = None
+class TraceEntry(ClientModel):
+    agent: Annotated[str, Field(title='Agent')]
+    model: Annotated[str | None, Field(title='Model')] = None
+    started_at: Annotated[str, Field(title='Started At')]
+    ended_at: Annotated[str | None, Field(title='Ended At')] = None
+    output_summary: Annotated[str | None, Field(title='Output Summary')] = None
+    error: Annotated[str | None, Field(title='Error')] = None
+RpcMethodForgetCameraParameter0: TypeAlias = str
+RpcMethodForgetCameraResult: TypeAlias = bool
+if TYPE_CHECKING:
+    JsonValue: TypeAlias = Optional[Union[str, int, float, bool, list['JsonValue'], dict[str, 'JsonValue']]]
+else:
+    JsonValue = TypeAliasType('JsonValue', Optional[Union[str, int, float, bool, list['JsonValue'], dict[str, 'JsonValue']]])
 
-class RecordResult(ClientModel):
+class SocketCommand(ClientModel):
     """
-    Result of Site.record. duplicate=True means the event id was already recorded (no change).
+    What a socket may send: {"type": "refresh"} -> that socket gets the current state again.
     """
-    event_id: Annotated[str, Field(title='Event Id')]
-    duplicate: Annotated[bool, Field(title='Duplicate')]
-    total: Annotated[int, Field(title='Total')]
-
-class SaesrEvent(ClientModel):
-    """
-    One detected incident, as published by the CV pipeline.
-    """
-    id: Annotated[str, Field(title='Id')]
-    camera: Annotated[str, Field(title='Camera')]
-    type: Annotated[Literal['unsafe_lift', 'no_hardhat', 'no_vest', 'restricted_zone', 'no_hairnet', 'no_gloves'], Field(title='Type')]
-    severity: Annotated[Literal['low', 'medium', 'high'], Field(title='Severity')]
-    timestamp: Annotated[str, Field(title='Timestamp')]
-    zone: Annotated[str, Field(title='Zone')]
-    clip_url: Annotated[str | None, Field(title='Clip Url')] = None
-    frame_url: Annotated[str | None, Field(title='Frame Url')] = None
-    confidence: Annotated[float | None, Field(title='Confidence')] = None
-    bbox: Annotated[list[float] | None, Field(title='Bbox')] = None
-    detail: Annotated[str | None, Field(title='Detail')] = None
-
-class Summary(ClientModel):
-    """
-    Same shape as GET /summary on the backend (minus `mode`).
-    """
-    total: Annotated[int, Field(title='Total')]
-    window_hours: Annotated[float, Field(title='Window Hours')]
-    by_type: Annotated[dict[str, int], Field(title='By Type')]
-    by_zone: Annotated[dict[str, int], Field(title='By Zone')]
-    by_camera: Annotated[dict[str, int], Field(title='By Camera')]
-    by_severity: Annotated[dict[str, int], Field(title='By Severity')]
-    weighted_incidents_per_hour: Annotated[float, Field(title='Weighted Incidents Per Hour')]
-    compliance_score: Annotated[float, Field(title='Compliance Score')]
-    last_event: SaesrEvent | None = None
-RpcMethodAcknowledgeParameter0: TypeAlias = str
-RpcMethodAcknowledgeParameter1: TypeAlias = str
-RpcMethodCameraChangedParameter0: TypeAlias = CameraInfo
-RpcMethodRecordParameter0: TypeAlias = SaesrEvent
-RpcMethodRecordResult: TypeAlias = RecordResult
-RpcMethodSummaryParameter0: TypeAlias = float
-RpcMethodSummaryResult: TypeAlias = Summary
-
-class SiteCommand(ClientModel):
-    """
-    What a dashboard socket may send.
-
-    {"type": "refresh"} -> the socket receives a fresh snapshot.
-    {"type": "ack", "event_id": "...", "by": "jas"} -> acknowledge an alert; everyone gets the new snapshot.
-    """
-    type: Annotated[Literal['refresh', 'ack'], Field(title='Type')]
-    event_id: Annotated[str | None, Field(title='Event Id')] = None
-    by: Annotated[str | None, Field(title='By')] = None
+    type: Annotated[Literal['refresh'], Field(title='Type')] = 'refresh'
 
 class Viewer(ClientModel):
     """
@@ -76,17 +44,9 @@ class Viewer(ClientModel):
     """
     name: Annotated[str, Field(title='Name')] = 'dashboard'
 SocketMetadata: TypeAlias = Viewer
-SocketIncoming: TypeAlias = SiteCommand
+SocketIncoming: TypeAlias = SocketCommand
 Tag: TypeAlias = str
-FieldSeenIds: TypeAlias = list[str]
-FieldTotal: TypeAlias = int
-FieldByZone: TypeAlias = dict[str, int]
-FieldByCamera: TypeAlias = dict[str, int]
-FieldByType: TypeAlias = dict[str, int]
-FieldBySeverity: TypeAlias = dict[str, int]
-FieldCameras: TypeAlias = dict[str, CameraInfo]
 FieldVersion: TypeAlias = int
-FieldUpdatedAt: TypeAlias = str | None
 
 class SocketEmittedState(ClientModel):
     """
@@ -98,81 +58,162 @@ class SocketStatePatch(ClientModel):
     Changed emitted fields; omitted fields are unchanged.
     """
 
+class ActionInput(ClientModel):
+    action_id: Annotated[str, Field(title='Action Id')]
+    incident_id: Annotated[str, Field(title='Incident Id')]
+    kind: Annotated[Literal['assign_coaching', 'open_corrective_record', 'flag_batch_hold', 'notify_floor_display', 'slow_machine'], Field(title='Kind')]
+    status: Annotated[Literal['pending', 'approved', 'done', 'failed', 'awaiting_approval', 'rejected'], Field(title='Status')] = 'pending'
+    params: Annotated[dict[str, JsonValueInput] | _Unset, Field(title='Params', exclude_if=_is_unset)] = _UNSET
+    approved_by: Annotated[str | None, Field(title='Approved By')] = None
+    executed_at: Annotated[str | None, Field(title='Executed At')] = None
+
+class ActionOutput(ClientModel):
+    action_id: Annotated[str, Field(title='Action Id')]
+    incident_id: Annotated[str, Field(title='Incident Id')]
+    kind: Annotated[Literal['assign_coaching', 'open_corrective_record', 'flag_batch_hold', 'notify_floor_display', 'slow_machine'], Field(title='Kind')]
+    status: Annotated[Literal['pending', 'approved', 'done', 'failed', 'awaiting_approval', 'rejected'], Field(title='Status')] = 'pending'
+    params: Annotated[dict[str, JsonValueOutput] | _Unset, Field(title='Params', exclude_if=_is_unset)] = _UNSET
+    approved_by: Annotated[str | None, Field(title='Approved By')] = None
+    executed_at: Annotated[str | None, Field(title='Executed At')] = None
+
+class IncidentInput(ClientModel):
+    incident_id: Annotated[str, Field(title='Incident Id')]
+    camera_id: Annotated[str, Field(title='Camera Id')]
+    type: Annotated[Literal['unsafe_lift', 'zone_breach', 'missing_hairnet', 'missing_gloves', 'compliant_observation'], Field(title='Type')]
+    zone_id: Annotated[str, Field(title='Zone Id')]
+    status: Annotated[Literal['verifying', 'confirmed', 'dismissed', 'unverified', 'awaiting_approval', 'actioned', 'resolved', 'recurring', 'closed'], Field(title='Status')] = 'verifying'
+    severity: Annotated[Severity | None, Field(title='Severity')] = None
+    event_ids: Annotated[list[str] | _Unset, Field(title='Event Ids', exclude_if=_is_unset)] = _UNSET
+    opened_at: Annotated[str, Field(title='Opened At')]
+    updated_at: Annotated[str, Field(title='Updated At')]
+    relay: Annotated[dict[str, JsonValueInput] | _Unset, Field(title='Relay', exclude_if=_is_unset)] = _UNSET
+    actions: Annotated[list[ActionInput] | _Unset, Field(title='Actions', exclude_if=_is_unset)] = _UNSET
+    trace: Annotated[list[TraceEntry] | _Unset, Field(title='Trace', exclude_if=_is_unset)] = _UNSET
+    keyframes: Annotated[list[str] | _Unset, Field(title='Keyframes', exclude_if=_is_unset)] = _UNSET
+    clip_url: Annotated[str | None, Field(title='Clip Url')] = None
+    verify_until: Annotated[str | None, Field(title='Verify Until')] = None
+    low_confidence: Annotated[bool, Field(title='Low Confidence')] = False
+    closed_at: Annotated[str | None, Field(title='Closed At')] = None
+
+class IncidentOutput(ClientModel):
+    incident_id: Annotated[str, Field(title='Incident Id')]
+    camera_id: Annotated[str, Field(title='Camera Id')]
+    type: Annotated[Literal['unsafe_lift', 'zone_breach', 'missing_hairnet', 'missing_gloves', 'compliant_observation'], Field(title='Type')]
+    zone_id: Annotated[str, Field(title='Zone Id')]
+    status: Annotated[Literal['verifying', 'confirmed', 'dismissed', 'unverified', 'awaiting_approval', 'actioned', 'resolved', 'recurring', 'closed'], Field(title='Status')] = 'verifying'
+    severity: Annotated[Severity | None, Field(title='Severity')] = None
+    event_ids: Annotated[list[str] | _Unset, Field(title='Event Ids', exclude_if=_is_unset)] = _UNSET
+    opened_at: Annotated[str, Field(title='Opened At')]
+    updated_at: Annotated[str, Field(title='Updated At')]
+    relay: Annotated[dict[str, JsonValueOutput] | _Unset, Field(title='Relay', exclude_if=_is_unset)] = _UNSET
+    actions: Annotated[list[ActionOutput] | _Unset, Field(title='Actions', exclude_if=_is_unset)] = _UNSET
+    trace: Annotated[list[TraceEntry] | _Unset, Field(title='Trace', exclude_if=_is_unset)] = _UNSET
+    keyframes: Annotated[list[str] | _Unset, Field(title='Keyframes', exclude_if=_is_unset)] = _UNSET
+    clip_url: Annotated[str | None, Field(title='Clip Url')] = None
+    verify_until: Annotated[str | None, Field(title='Verify Until')] = None
+    low_confidence: Annotated[bool, Field(title='Low Confidence')] = False
+    closed_at: Annotated[str | None, Field(title='Closed At')] = None
+
+class Action(ClientModel):
+    action_id: Annotated[str, Field(title='Action Id')]
+    incident_id: Annotated[str, Field(title='Incident Id')]
+    kind: Annotated[Literal['assign_coaching', 'open_corrective_record', 'flag_batch_hold', 'notify_floor_display', 'slow_machine'], Field(title='Kind')]
+    status: Annotated[Literal['pending', 'approved', 'done', 'failed', 'awaiting_approval', 'rejected'], Field(title='Status')] = 'pending'
+    params: Annotated[dict[str, JsonValue] | _Unset, Field(title='Params', exclude_if=_is_unset)] = _UNSET
+    approved_by: Annotated[str | None, Field(title='Approved By')] = None
+    executed_at: Annotated[str | None, Field(title='Executed At')] = None
+
 class Incident(ClientModel):
-    """
-    An event as stored by the Site, plus its acknowledgement.
-    """
-    event: SaesrEvent
-    recorded_at: Annotated[str, Field(title='Recorded At')]
-    acknowledged_by: Annotated[str | None, Field(title='Acknowledged By')] = None
-    acknowledged_at: Annotated[str | None, Field(title='Acknowledged At')] = None
+    incident_id: Annotated[str, Field(title='Incident Id')]
+    camera_id: Annotated[str, Field(title='Camera Id')]
+    type: Annotated[Literal['unsafe_lift', 'zone_breach', 'missing_hairnet', 'missing_gloves', 'compliant_observation'], Field(title='Type')]
+    zone_id: Annotated[str, Field(title='Zone Id')]
+    status: Annotated[Literal['verifying', 'confirmed', 'dismissed', 'unverified', 'awaiting_approval', 'actioned', 'resolved', 'recurring', 'closed'], Field(title='Status')] = 'verifying'
+    severity: Annotated[Severity | None, Field(title='Severity')] = None
+    event_ids: Annotated[list[str] | _Unset, Field(title='Event Ids', exclude_if=_is_unset)] = _UNSET
+    opened_at: Annotated[str, Field(title='Opened At')]
+    updated_at: Annotated[str, Field(title='Updated At')]
+    relay: Annotated[dict[str, JsonValue] | _Unset, Field(title='Relay', exclude_if=_is_unset)] = _UNSET
+    actions: Annotated[list[Action] | _Unset, Field(title='Actions', exclude_if=_is_unset)] = _UNSET
+    trace: Annotated[list[TraceEntry] | _Unset, Field(title='Trace', exclude_if=_is_unset)] = _UNSET
+    keyframes: Annotated[list[str] | _Unset, Field(title='Keyframes', exclude_if=_is_unset)] = _UNSET
+    clip_url: Annotated[str | None, Field(title='Clip Url')] = None
+    verify_until: Annotated[str | None, Field(title='Verify Until')] = None
+    low_confidence: Annotated[bool, Field(title='Low Confidence')] = False
+    closed_at: Annotated[str | None, Field(title='Closed At')] = None
 
-class SiteSnapshot(ClientModel):
-    """
-    Everything a dashboard needs to render one warehouse.
-    """
-    site: Annotated[str, Field(title='Site')]
-    version: Annotated[int, Field(title='Version')]
-    '\n    Increments on every change; use it to drop out-of-order messages.\n    '
-    updated_at: Annotated[str | None, Field(title='Updated At')]
-    total: Annotated[int, Field(title='Total')]
-    '\n    Lifetime incidents recorded (not windowed).\n    '
-    by_zone: Annotated[dict[str, int], Field(title='By Zone')]
-    by_camera: Annotated[dict[str, int], Field(title='By Camera')]
-    by_type: Annotated[dict[str, int], Field(title='By Type')]
-    by_severity: Annotated[dict[str, int], Field(title='By Severity')]
-    compliance_score: Annotated[float, Field(title='Compliance Score')]
-    '\n    24h compliance score, 0..100.\n    '
-    weighted_incidents_per_hour: Annotated[float, Field(title='Weighted Incidents Per Hour')]
-    window_hours: Annotated[float, Field(title='Window Hours')]
-    open_alerts_count: Annotated[int, Field(title='Open Alerts Count')]
-    open_alerts: Annotated[list[Incident], Field(title='Open Alerts')]
-    '\n    Newest unacknowledged incidents, newest first.\n    '
-    recent: Annotated[list[Incident], Field(title='Recent')]
-    '\n    Newest incidents, newest first.\n    '
-    cameras: Annotated[dict[str, CameraInfo], Field(title='Cameras')]
-RpcMethodAcknowledgeResult: TypeAlias = Incident | None
-RpcMethodSnapshotResult: TypeAlias = SiteSnapshot
+class CameraStateInput(ClientModel):
+    camera_id: Annotated[str, Field(title='Camera Id')]
+    site_id: Annotated[str, Field(title='Site Id')] = 'site-demo'
+    status: Annotated[Literal['online', 'offline', 'recovering'], Field(title='Status')] = 'online'
+    last_heartbeat: Annotated[str | None, Field(title='Last Heartbeat')] = None
+    version: Annotated[int, Field(title='Version')] = 0
+    recovered_from_version: Annotated[int | None, Field(title='Recovered From Version')] = None
+    compliance_score: Annotated[float, Field(title='Compliance Score')] = 100.0
+    counters: Annotated[dict[str, int] | _Unset, Field(title='Counters', exclude_if=_is_unset)] = _UNSET
+    false_positives_filtered: Annotated[int, Field(title='False Positives Filtered')] = 0
+    autonomous_fixes: Annotated[int, Field(title='Autonomous Fixes')] = 0
+    incidents: Annotated[list[IncidentInput] | _Unset, Field(title='Incidents', exclude_if=_is_unset)] = _UNSET
 
-class SiteMessage(ClientModel):
-    """
-    What a Site socket receives: always a full snapshot, tagged with why it was sent.
-    """
-    type: Annotated[Literal['snapshot'], Field(title='Type')] = 'snapshot'
-    reason: Annotated[Literal['connect', 'refresh', 'recorded', 'acknowledged', 'camera'], Field(title='Reason')]
-    event_id: Annotated[str | None, Field(title='Event Id')] = None
-    snapshot: SiteSnapshot
-SocketOutgoing: TypeAlias = SiteMessage
-FieldIncidents: TypeAlias = list[Incident]
+class CameraStateOutput(ClientModel):
+    camera_id: Annotated[str, Field(title='Camera Id')]
+    site_id: Annotated[str, Field(title='Site Id')] = 'site-demo'
+    status: Annotated[Literal['online', 'offline', 'recovering'], Field(title='Status')] = 'online'
+    last_heartbeat: Annotated[str | None, Field(title='Last Heartbeat')] = None
+    version: Annotated[int, Field(title='Version')] = 0
+    recovered_from_version: Annotated[int | None, Field(title='Recovered From Version')] = None
+    compliance_score: Annotated[float, Field(title='Compliance Score')] = 100.0
+    counters: Annotated[dict[str, int] | _Unset, Field(title='Counters', exclude_if=_is_unset)] = _UNSET
+    false_positives_filtered: Annotated[int, Field(title='False Positives Filtered')] = 0
+    autonomous_fixes: Annotated[int, Field(title='Autonomous Fixes')] = 0
+    incidents: Annotated[list[IncidentOutput] | _Unset, Field(title='Incidents', exclude_if=_is_unset)] = _UNSET
+
+class SiteState(ClientModel):
+    site_id: Annotated[str, Field(title='Site Id')] = 'site-demo'
+    site_score: Annotated[float, Field(title='Site Score')] = 100.0
+    active_incidents: Annotated[int, Field(title='Active Incidents')] = 0
+    autonomous_fixes: Annotated[int, Field(title='Autonomous Fixes')] = 0
+    cameras: Annotated[list[CameraStateOutput] | _Unset, Field(title='Cameras', exclude_if=_is_unset)] = _UNSET
+RpcMethodStateResult: TypeAlias = SiteState
+RpcMethodUpdateCameraParameter0: TypeAlias = CameraStateInput
+
+class CameraState(ClientModel):
+    camera_id: Annotated[str, Field(title='Camera Id')]
+    site_id: Annotated[str, Field(title='Site Id')] = 'site-demo'
+    status: Annotated[Literal['online', 'offline', 'recovering'], Field(title='Status')] = 'online'
+    last_heartbeat: Annotated[str | None, Field(title='Last Heartbeat')] = None
+    version: Annotated[int, Field(title='Version')] = 0
+    recovered_from_version: Annotated[int | None, Field(title='Recovered From Version')] = None
+    compliance_score: Annotated[float, Field(title='Compliance Score')] = 100.0
+    counters: Annotated[dict[str, int] | _Unset, Field(title='Counters', exclude_if=_is_unset)] = _UNSET
+    false_positives_filtered: Annotated[int, Field(title='False Positives Filtered')] = 0
+    autonomous_fixes: Annotated[int, Field(title='Autonomous Fixes')] = 0
+    incidents: Annotated[list[Incident] | _Unset, Field(title='Incidents', exclude_if=_is_unset)] = _UNSET
+
+class SocketSiteState(ClientModel):
+    site_id: Annotated[str, Field(title='Site Id')] = 'site-demo'
+    site_score: Annotated[float, Field(title='Site Score')] = 100.0
+    active_incidents: Annotated[int, Field(title='Active Incidents')] = 0
+    autonomous_fixes: Annotated[int, Field(title='Autonomous Fixes')] = 0
+    cameras: Annotated[list[CameraState] | _Unset, Field(title='Cameras', exclude_if=_is_unset)] = _UNSET
+SocketOutgoing: TypeAlias = SocketSiteState
+FieldCameras: TypeAlias = dict[str, CameraState]
 
 class SocketState(ClientModel):
     """
     Public persisted fields of the actor.
     """
-    incidents: FieldIncidents
-    seen_ids: FieldSeenIds
-    total: FieldTotal
-    by_zone: FieldByZone
-    by_camera: FieldByCamera
-    by_type: FieldByType
-    by_severity: FieldBySeverity
     cameras: FieldCameras
     version: FieldVersion
-    updated_at: FieldUpdatedAt
 
 class ContractTypes(ClientModel):
     """
     Named wire types used by this generated actor client.
     """
-    RpcMethod_acknowledge_Parameter_0: RpcMethodAcknowledgeParameter0
-    RpcMethod_acknowledge_Parameter_1: RpcMethodAcknowledgeParameter1
-    RpcMethod_acknowledge_Result: RpcMethodAcknowledgeResult
-    RpcMethod_camera_changed_Parameter_0: RpcMethodCameraChangedParameter0
-    RpcMethod_record_Parameter_0: RpcMethodRecordParameter0
-    RpcMethod_record_Result: RpcMethodRecordResult
-    RpcMethod_snapshot_Result: RpcMethodSnapshotResult
-    RpcMethod_summary_Parameter_0: RpcMethodSummaryParameter0
-    RpcMethod_summary_Result: RpcMethodSummaryResult
+    RpcMethod_forget_camera_Parameter_0: RpcMethodForgetCameraParameter0
+    RpcMethod_forget_camera_Result: RpcMethodForgetCameraResult
+    RpcMethod_state_Result: RpcMethodStateResult
+    RpcMethod_update_camera_Parameter_0: RpcMethodUpdateCameraParameter0
     SocketMetadata_1: Annotated[SocketMetadata, Field(alias='SocketMetadata')]
     SocketIncoming_1: Annotated[SocketIncoming, Field(alias='SocketIncoming')]
     SocketOutgoing_1: Annotated[SocketOutgoing, Field(alias='SocketOutgoing')]
