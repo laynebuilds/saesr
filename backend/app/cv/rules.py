@@ -39,22 +39,30 @@ class Person:
     kpts: Optional[np.ndarray] = None  # (17, 2)
     kpt_conf: Optional[np.ndarray] = None  # (17,)
 
+    def _ankles(self) -> list[int]:
+        if self.kpts is None:
+            return []
+        return [
+            i for i in (L_ANKLE, R_ANKLE)
+            if (self.kpt_conf is None or self.kpt_conf[i] >= KPT_MIN_CONF)
+            and not (self.kpts[i][0] == 0 and self.kpts[i][1] == 0)
+        ]
+
     @property
     def foot(self) -> tuple[float, float]:
         """Ankle midpoint when the ankles are visible, else the bottom centre of the box."""
-        if self.kpts is not None:
-            vis = [
-                i for i in (L_ANKLE, R_ANKLE)
-                if (self.kpt_conf is None or self.kpt_conf[i] >= KPT_MIN_CONF)
-                and not (self.kpts[i][0] == 0 and self.kpts[i][1] == 0)
-            ]
-            if vis:
-                return (
-                    float(np.mean([self.kpts[i][0] for i in vis])),
-                    float(np.mean([self.kpts[i][1] for i in vis])),
-                )
+        vis = self._ankles()
+        if vis:
+            return (
+                float(np.mean([self.kpts[i][0] for i in vis])),
+                float(np.mean([self.kpts[i][1] for i in vis])),
+            )
         x1, _, x2, y2 = self.bbox
         return ((x1 + x2) / 2.0, y2)
+
+    def feet_out_of_frame(self, h: int) -> bool:
+        """Box cut by the bottom edge and no ankle visible: we do not know where the feet are."""
+        return not self._ankles() and self.bbox[3] >= h * 0.98
 
 
 @dataclass
@@ -219,6 +227,9 @@ class ZoneRule:
                 if not z.restricted:
                     continue
                 key = (person.track_id, z.name)
+                if person.feet_out_of_frame(h):
+                    self.sustain.update(key, None, t)  # unknown, never evidence
+                    continue
                 inside = z.contains(person.foot, w, h)
                 if inside:
                     bad.add(person.track_id)

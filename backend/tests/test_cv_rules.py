@@ -379,3 +379,114 @@ def test_blur_box_clipped_to_frame():
     conf[0] = 0.9
     (x1, y1, x2, y2), = blur_faces(img, [Person(1, (0, 0, 60, 100), 0.9, k, conf)])
     assert x1 == 0 and y1 == 0 and x2 <= 100 and y2 <= 100
+
+
+# ---- end to end: real run() on a generated video with a scripted detector (no model) ----
+
+def test_run_end_to_end(tmp_path, monkeypatch):
+    import asyncio
+
+    import cv2
+
+    from app.cv import clips as clips_mod
+    from app.cv import pipeline as pl
+    from app.schema import Event
+
+    monkeypatch.setattr(clips_mod, "CLIPS_DIR", tmp_path)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    fps, secs, w, h = 8, 24, 320, 240
+    src = tmp_path / "src.mp4"
+    vw = cv2.VideoWriter(str(src), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    for i in range(fps * secs):
+        vw.write(_noise(h, w, seed=i))
+    vw.release()
+
+    calls = {"n": 0}
+
+    def detector(frame):
+        calls["n"] += 1
+        t = calls["n"] / fps
+        if 6.0 <= t < 8.5:
+            k = skeleton(62, 172, hip=(100, 150), thigh=40, shin=40, trunk=48, arm=58)  # stoop lift
+        elif 13.0 <= t < 21.0:
+            k = skeleton(5, 178, hip=(260, 150), thigh=40, shin=40, trunk=48, arm=58)  # in zone-machine-a
+        else:
+            k = skeleton(5, 178, hip=(100, 150), thigh=40, shin=40, trunk=48, arm=58)  # standing, pack line
+        x1, y1 = k.min(axis=0) - 5
+        x2, y2 = k.max(axis=0) + 5
+        return [Person(4, (x1, y1, x2, y2), 0.9, k, np.ones(17))]
+
+    events: list[Event] = []
+    frames: list = []
+
+    async def publish(ev):
+        events.append(ev)
+
+    def set_frame(jpeg, camera_id):
+        frames.append((len(jpeg), camera_id))
+
+    asyncio.run(pl.run(publish, set_frame, str(src), "cam-01", False, realtime=False, detector=detector))
+
+    assert len(frames) == fps * secs and all(c == "cam-01" and n > 0 for n, c in frames)
+    by_type = {}
+    for ev in events:
+        by_type.setdefault(ev.type, []).append(ev)
+        assert ev.camera_id == "cam-01" and ev.site_id == "site-demo"
+        x, y, bw, bh = ev.bbox
+        assert 0 <= x <= 1 and 0 <= y <= 1 and 0 < bw <= 1 and 0 < bh <= 1
+        assert 0 <= ev.centroid.x <= 1 and 0 <= ev.centroid.y <= 1
+        assert "latency_ms" in ev.metrics
+    lift = by_type["unsafe_lift"]
+    assert len(lift) == 1
+    ev = lift[0]
+    assert ev.zone_id == "zone-pack-line"
+    assert abs(ev.metrics["torso_angle_deg"] - 62) < 1 and ev.metrics["duration_s"] >= 1.0
+    assert ev.clip_url == f"/clips/{ev.event_id}.mp4" and (tmp_path / f"{ev.event_id}.mp4").stat().st_size > 0
+    assert len(ev.keyframes) == 3 and all((tmp_path / u.split("/")[-1]).exists() for u in ev.keyframes)
+    clip = cv2.VideoCapture(str(tmp_path / f"{ev.event_id}.mp4"))
+    n = int(clip.get(cv2.CAP_PROP_FRAME_COUNT))
+    assert 9 * fps <= n <= 11 * fps + 1  # 5 s before + 5 s after
+    zone = by_type["zone_breach"]
+    assert len(zone) == 1 and zone[0].zone_id == "zone-machine-a" and zone[0].clip_url
+    comp = by_type["compliant_observation"]
+    assert len(comp) >= 3 and all(c.clip_url is None and len(c.keyframes) == 1 for c in comp)
+    assert {c.zone_id for c in comp} == {"zone-pack-line"}
+
+
+def test_sampling_hits_target_fps_for_common_sources():
+    from app.cv.pipeline import Pipeline
+
+    frame = np.zeros((4, 4, 3), np.uint8)
+
+    class Fake(Pipeline):
+        def __init__(self, src_fps):
+            self.interval, self.last_t, self.next_due, self.n, self.src = 1 / 8, 0.0, None, 0, src_fps
+
+        def _read(self):
+            self.n += 1
+            return frame if self.n <= self.src * 10 else None
+
+        def media_time(self):
+            return self.n / self.src
+
+    for src, want in ((10, 8.0), (25, 8.0), (30, 8.0), (60, 8.0), (5, 5.0)):
+        p = Fake(src)
+        n = 0
+        while p.read_sampled() is not None:
+            n += 1
+        assert abs(n / 10 - want) <= 0.2, (src, n)
+
+
+def test_zone_feet_out_of_frame_is_unknown():
+    cfg = CameraConfig("cam-x", "floor", [Zone("lane", True, [[0.5, 0.5], [1, 0.5], [1, 1], [0.5, 1]])])
+    rule = ZoneRule(cfg)
+    cut = Person(7, (700, 300, 800, 1000), 0.8)  # box cut by the bottom edge, no ankles
+    assert not run_zone(rule, [cut] * 60)
+
+
+def run_zone(rule, people_seq, fps=25.0):
+    out = []
+    for i, p in enumerate(people_seq):
+        hits, _ = rule([p], i / fps, 1000, 1000)
+        out += hits
+    return out

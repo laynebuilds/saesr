@@ -131,10 +131,13 @@ class Pipeline:
         self.fps = 25.0
         self.frames_read = 0  # every decoded frame (drives media time for files)
         self.frames_done = 0  # frames that went through the model
-        self.last_t: Optional[float] = None
+        self.last_t: float = 0.0
+        self.next_due: Optional[float] = None
         self.eof = False  # a non-looping file reached its end
         self.t0 = time.monotonic()
-        self.debounce = Debouncer()  # keyed by (type, track id), timed in media seconds
+        self.infer_ms = 0  # model time for the last processed frame
+        self.debounce = Debouncer()
+        self.episodes: dict[tuple, float] = {}  # (type, track id, onset) already published  # keyed by (type, track id), timed in media seconds
         self.banners: dict[str, float] = {}  # label -> monotonic time until which it shows
         self.read_failures = 0
         self.lock = threading.Lock()  # step() and close() never overlap (release during read can crash)
@@ -200,7 +203,10 @@ class Pipeline:
             if frame is None:
                 return None
             t = self.media_time()
-            if self.last_t is None or t - self.last_t >= self.interval - 1e-6 or t < self.last_t:
+            if self.next_due is None or t >= self.next_due - 1e-6 or t < self.last_t:
+                # schedule from the due time, not the frame time, so a 10 fps source still yields ~8 fps
+                due = self.next_due if self.next_due is not None and t - self.next_due < self.interval else t
+                self.next_due = due + self.interval
                 self.last_t = t
                 h, w = frame.shape[:2]
                 if w > MAX_WIDTH:
@@ -221,7 +227,9 @@ class Pipeline:
         frame, t = got
         self.frames_done += 1
         h, w = frame.shape[:2]
+        t_inf = time.monotonic()
         people = self.detect(frame)
+        self.infer_ms = int(round((time.monotonic() - t_inf) * 1000))
         blur_faces(frame, people)  # privacy first: nothing below ever sees an unblurred face
 
         lift_hits, lift_bad = self.lift(people, t)
@@ -231,7 +239,17 @@ class Pipeline:
         for hit in hits:
             if hit.zone is None:
                 hit.zone = self.zones.zone_of(hit.person, w, h)
-        fired = [hit for hit in hits if self.debounce.allow((hit.type, hit.person.track_id), t)]
+        # One event per continuous episode (same onset), and at most one per DEBOUNCE_S per person+type.
+        fired = []
+        for hit in hits:
+            episode = (hit.type, hit.person.track_id, hit.onset_t)
+            if episode in self.episodes:
+                continue
+            if self.debounce.allow((hit.type, hit.person.track_id), t):
+                self.episodes[episode] = t
+                fired.append(hit)
+        if len(self.episodes) > 500:
+            self.episodes = {k: v for k, v in self.episodes.items() if t - v < 60.0}
         for hit in fired:  # banner goes on this very frame
             self.banners[LABELS.get(hit.type, hit.type.upper())] = time.monotonic() + BANNER_S
         compliant = self.compliance(people, bad, t, w, h)
@@ -289,6 +307,7 @@ class Pipeline:
         nx2, ny2 = _clamp(x2 / w), _clamp(y2 / h)
         metrics = {k: v for k, v in hit.metrics.items() if v is not None}
         metrics["track_id"] = hit.person.track_id
+        metrics["inference_ms"] = self.infer_ms
         return Event(
             site_id=SITE_ID,
             camera_id=self.camera_id,

@@ -91,13 +91,13 @@ def write_mp4(path: Path, frames: list[BufferedFrame]) -> Optional[str]:
 
 
 class ClipRecorder:
-    def __init__(self, clips_dir: Path = CLIPS_DIR, ring_s: float = RING_S, pre_s: float = PRE_S,
+    def __init__(self, clips_dir: Optional[Path] = None, ring_s: float = RING_S, pre_s: float = PRE_S,
                  post_s: float = POST_S):
         self.ring = RingBuffer(max(ring_s, pre_s))
         self.pre_s = pre_s
         self.post_s = post_s
         self.pending: list[Pending] = []
-        self.dir = Path(clips_dir)
+        self.dir = Path(clips_dir if clips_dir is not None else CLIPS_DIR)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.codec: Optional[str] = None
 
