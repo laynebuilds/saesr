@@ -11,3 +11,7 @@ backend/clips/*
 .DS_Store
 backend/data/
 samples/real/
+
+# Stock clips stay local (Pexels license: no redistribution as standalone files). See dashboard/public/footage/CREDITS.md
+dashboard/public/footage/*.mp4
+dashboard/public/footage/*.jpg
