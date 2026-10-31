@@ -2,6 +2,16 @@
 
 Computer vision threat detection for warehouses. Cameras you already have, watched by models that flag unsafe lifts, missing PPE and people in restricted zones the moment it happens, with a clip of every incident and a weekly summary of the top risks.
 
+## How we are judged (every decision maps to one of these, 20% each)
+
+| Criterion | What it means for saesr |
+| --- | --- |
+| **Use of real-time AI and track technology** | Detection runs live on the camera feed; incidents stream in under a second. Agent Relay: camera agents and a safety supervisor coordinate directly. Terse Durable Actors: live warehouse state the dashboard subscribes to. |
+| **Originality and creativity** | Not another dashboard of boxes: agents that reason across cameras (same person, same zone, same shift) and act, not just alert. |
+| **Execution and demo** | It works live in the room on a real camera, with a recorded backup. 2 flawless violation types beat 3 shaky ones. |
+| **User experience and design** | One glance: what happened, where, how bad, the clip. Calm, clear, built for a floor manager, not an ML engineer. |
+| **Potential and impact** | Warehouse injuries are frequent and costly, and most sites already have cameras. Software only, works on existing CCTV. |
+
 ## How it fits together
 
 ```
