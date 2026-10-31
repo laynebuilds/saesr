@@ -1,0 +1,203 @@
+"""Violation rules. Each rule consumes per-person observations and returns hits.
+
+Thresholds live in config.py.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+
+from .geometry import LiftPose, measure_lift_pose, point_in_polygon
+
+from .config import (
+    KPT_MIN_CONF,
+    LIFT_BACK_ANGLE_MIN,
+    LIFT_GAP_TOLERANCE_S,
+    LIFT_HYSTERESIS_DEG,
+    LIFT_KNEE_ANGLE_MIN,
+    LIFT_LEG_ANGLE_MAX,
+    LIFT_SUSTAIN_S,
+    ZONE_SUSTAIN_S,
+    ZONES_PATH,
+)
+
+
+@dataclass
+class Person:
+    track_id: int
+    bbox: tuple[float, float, float, float]  # x1 y1 x2 y2 pixels
+    conf: float
+    kpts: Optional[np.ndarray] = None  # (17, 2)
+    kpt_conf: Optional[np.ndarray] = None  # (17,)
+
+    @property
+    def foot(self) -> tuple[float, float]:
+        x1, _, x2, y2 = self.bbox
+        return ((x1 + x2) / 2.0, y2)
+
+
+@dataclass
+class Hit:
+    type: str
+    severity: str
+    person: Person
+    confidence: float
+    detail: str
+    zone: Optional[str] = None
+
+
+class Sustain:
+    """Per-key sustain window.
+
+    update(key, state, t): state True = condition seen, False = condition clearly absent
+    (resets the timer at once), None = unknown this frame (e.g. keypoints hidden). Unknown
+    frames are tolerated for gap_s so a brief occlusion does not restart the timer, but they
+    never count as evidence on their own. Returns True once the condition has held hold_s.
+    """
+
+    def __init__(self, hold_s: float, gap_s: float = 0.25):
+        self.hold_s = hold_s
+        self.gap_s = gap_s
+        self._start: dict = {}
+        self._last: dict = {}
+
+    def active(self, key) -> bool:
+        return key in self._start
+
+    def update(self, key, state: Optional[bool], t: float) -> bool:
+        if state is True:
+            if key not in self._start or t - self._last[key] > self.gap_s:
+                self._start[key] = t
+            self._last[key] = t
+            return t - self._start[key] >= self.hold_s
+        if state is False or (key in self._last and t - self._last[key] > self.gap_s):
+            self._start.pop(key, None)
+            self._last.pop(key, None)
+        return False
+
+    def prune(self, live_keys, t: float) -> None:
+        """Forget keys not seen for a while (people who left the frame)."""
+        for key in [k for k, last in self._last.items() if k not in live_keys and t - last > 5.0]:
+            self._start.pop(key, None)
+            self._last.pop(key, None)
+
+
+def is_unsafe_lift(p: LiftPose, already_active: bool = False) -> bool:
+    """Stooped back + straight legs + standing (not lying). Hysteresis: once a person is in the
+    violation window the thresholds relax by LIFT_HYSTERESIS_DEG so jitter at the boundary
+    does not reset the timer."""
+    slack = LIFT_HYSTERESIS_DEG if already_active else 0.0
+    return (
+        p.back_angle > LIFT_BACK_ANGLE_MIN - slack
+        and p.knee_angle > LIFT_KNEE_ANGLE_MIN - slack
+        and p.leg_angle < LIFT_LEG_ANGLE_MAX
+    )
+
+
+class LiftRule:
+    def __init__(self):
+        self.sustain = Sustain(LIFT_SUSTAIN_S, LIFT_GAP_TOLERANCE_S)
+        self.last_pose: dict[int, LiftPose] = {}
+
+    def __call__(self, people: list[Person], t: float) -> tuple[list[Hit], set[int]]:
+        """Returns (hits, ids currently in a bad posture, for drawing)."""
+        hits, bad = [], set()
+        for person in people:
+            if person.kpts is None:
+                continue
+            pose = measure_lift_pose(person.kpts, person.kpt_conf, KPT_MIN_CONF)
+            if pose is None:
+                # not enough visible joints: unknown, never evidence of a violation
+                self.last_pose.pop(person.track_id, None)
+                self.sustain.update(person.track_id, None, t)
+                continue
+            self.last_pose[person.track_id] = pose
+            active = is_unsafe_lift(pose, self.sustain.active(person.track_id))
+            if active:
+                bad.add(person.track_id)
+            if self.sustain.update(person.track_id, active, t):
+                # confidence: how far past the threshold, blended with detector confidence
+                margin = min(1.0, (pose.back_angle - LIFT_BACK_ANGLE_MIN) / 30.0 + 0.5)
+                hits.append(
+                    Hit(
+                        type="unsafe_lift",
+                        severity="high",
+                        person=person,
+                        confidence=round(float(min(1.0, 0.5 * person.conf + 0.5 * margin)), 2),
+                        detail=f"back bent {pose.back_angle:.0f} degrees with straight legs "
+                        f"(knee {pose.knee_angle:.0f} degrees)",
+                    )
+                )
+        self.sustain.prune({p.track_id for p in people}, t)
+        return hits, bad
+
+
+@dataclass
+class Zone:
+    name: str
+    restricted: bool
+    polygon: list[list[float]]  # normalized 0..1
+
+    def pixels(self, w: int, h: int) -> np.ndarray:
+        return np.array([[x * w, y * h] for x, y in self.polygon], dtype=np.int32)
+
+    def contains(self, pt: tuple[float, float], w: int, h: int) -> bool:
+        return point_in_polygon((pt[0] / w, pt[1] / h), self.polygon)
+
+
+@dataclass
+class CameraConfig:
+    camera: str
+    default_zone: str
+    zones: list[Zone] = field(default_factory=list)
+
+
+def load_camera_config(camera: str, path: Path = ZONES_PATH) -> CameraConfig:
+    data = {}
+    if path.exists():
+        data = json.loads(path.read_text())
+    cam = data.get(camera)
+    if cam is None:
+        # fall back to the first camera in the file so a new camera id still gets zones
+        cam = next(iter(data.values()), {}) if data else {}
+    zones = [Zone(z["name"], bool(z.get("restricted", False)), z["polygon"]) for z in cam.get("zones", [])]
+    return CameraConfig(camera=camera, default_zone=cam.get("default_zone", "floor"), zones=zones)
+
+
+class ZoneRule:
+    def __init__(self, cfg: CameraConfig):
+        self.cfg = cfg
+        self.sustain = Sustain(ZONE_SUSTAIN_S, 0.25)
+
+    def zone_of(self, person: Person, w: int, h: int) -> str:
+        for z in self.cfg.zones:
+            if z.contains(person.foot, w, h):
+                return z.name
+        return self.cfg.default_zone
+
+    def __call__(self, people: list[Person], t: float, w: int, h: int) -> tuple[list[Hit], set[int]]:
+        hits, bad = [], set()
+        for person in people:
+            for z in self.cfg.zones:
+                if not z.restricted:
+                    continue
+                inside = z.contains(person.foot, w, h)
+                if inside:
+                    bad.add(person.track_id)
+                if self.sustain.update((person.track_id, z.name), inside, t):
+                    hits.append(
+                        Hit(
+                            type="restricted_zone",
+                            severity="high",
+                            person=person,
+                            confidence=round(float(person.conf), 2),
+                            detail=f"person inside restricted area {z.name}",
+                            zone=z.name,
+                        )
+                    )
+        self.sustain.prune({(p.track_id, z.name) for p in people for z in self.cfg.zones}, t)
+        return hits, bad
