@@ -9,3 +9,4 @@ backend/clips/*
 !backend/clips/.gitkeep
 *.pt
 .DS_Store
+backend/data/

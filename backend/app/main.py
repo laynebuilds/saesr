@@ -4,7 +4,7 @@ MODE=mock (default) feeds the bus from app.mock. MODE=live starts the CV pipelin
 from app.cv.pipeline, imported lazily so mock mode needs no CV dependencies.
 """
 import asyncio
-import json
+import logging
 import os
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -18,6 +18,9 @@ from fastapi.staticfiles import StaticFiles
 
 from . import bus, mock
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("saesr.api")
+
 MODE = os.environ.get("MODE", "mock").lower()
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = BACKEND_DIR.parent
@@ -25,14 +28,16 @@ CLIPS_DIR = BACKEND_DIR / "clips"
 SAMPLES_DIR = REPO_DIR / "samples"
 KEEPALIVE_S = 15.0
 MJPEG_FPS = 10
+RESTART_BACKOFF_S = (1, 2, 5, 10, 30)  # producer restart delays; the last one repeats
 
 
-async def _start_producer() -> asyncio.Task:
+def _producer():
+    """The coroutine factory for this mode: live CV pipeline, or mock events."""
     if MODE == "live":
         from .cv import pipeline  # lazy: CV deps only needed in live mode
 
         source = os.environ.get("SOURCE", "0")
-        return asyncio.create_task(pipeline.run(bus.publish, bus.set_frame, source))
+        return lambda: pipeline.run(bus.publish, bus.set_frame, source)
 
     async def publish_with_frame(event):
         # Mock has no camera: show the sample still of the latest event as the live frame.
@@ -41,12 +46,31 @@ async def _start_producer() -> asyncio.Task:
             bus.set_frame(still.read_bytes())
         await bus.publish(event)
 
-    return asyncio.create_task(mock.run(publish_with_frame, float(os.environ.get("MOCK_EVERY", "4"))))
+    every = float(os.environ.get("MOCK_EVERY", "4"))
+    return lambda: mock.run(publish_with_frame, every)
+
+
+async def _supervise(make) -> None:
+    """Keep the producer running: a crash in the pipeline is logged and restarted with backoff,
+    so a bad frame or a camera hiccup never takes the API down."""
+    attempt = 0
+    while True:
+        try:
+            await make()
+            log.warning("producer exited; restarting")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("producer crashed; restarting")
+        await asyncio.sleep(RESTART_BACKOFF_S[min(attempt, len(RESTART_BACKOFF_S) - 1)])
+        attempt += 1
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = await _start_producer()
+    loaded = bus.load_history()
+    log.info("mode=%s, %d events loaded from %s", MODE, loaded, bus.EVENTS_LOG)
+    task = asyncio.create_task(_supervise(_producer()))
     try:
         yield
     finally:
@@ -68,30 +92,32 @@ def health():
 
 
 @app.get("/events/recent")
-def events_recent(limit: int = Query(100, ge=1, le=500)):
-    return [e.model_dump(mode="json") for e in bus.recent(limit)]
+def events_recent(limit: int = Query(100, ge=1, le=bus.RECENT_MAX), hours: float | None = Query(None, gt=0)):
+    """Newest last. hours limits to the last N hours (e.g. hours=168 for a weekly summary)."""
+    events = bus.recent(bus.RECENT_MAX if hours else limit)
+    if hours:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        events = [e for e in events if _parse_ts(e.timestamp) >= cutoff][-limit:]
+    return [e.model_dump(mode="json") for e in events]
 
 
 @app.get("/events/stream")
 async def events_stream(request: Request):
     async def gen():
-        it = bus.subscribe().__aiter__()
-        nxt = asyncio.ensure_future(it.__anext__())
+        q = bus.open_subscription()
         try:
             yield ": connected\n\n"
-            while True:
-                if await request.is_disconnected():
-                    break
-                done, _ = await asyncio.wait({nxt}, timeout=KEEPALIVE_S)
-                if not done:
+            while not await request.is_disconnected():
+                try:
+                    event = await asyncio.wait_for(q.get(), KEEPALIVE_S)
+                except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
                     continue
-                event = nxt.result()
-                nxt = asyncio.ensure_future(it.__anext__())
                 yield f"data: {event.model_dump_json()}\n\n"
+        except asyncio.CancelledError:
+            pass  # client went away; nothing to clean beyond the subscription
         finally:
-            nxt.cancel()
-            await it.aclose()
+            bus.close_subscription(q)
 
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     return StreamingResponse(gen(), media_type="text/event-stream", headers=headers)
@@ -110,9 +136,11 @@ async def video(request: Request):
     boundary = "frame"
 
     async def gen():
+        sent = -1
         while not await request.is_disconnected():
             jpeg = bus.latest_frame()
-            if jpeg is not None:
+            if jpeg is not None and bus.frame_seq() != sent:
+                sent = bus.frame_seq()
                 yield (
                     f"--{boundary}\r\nContent-Type: image/jpeg\r\n"
                     f"Content-Length: {len(jpeg)}\r\n\r\n"
@@ -128,7 +156,7 @@ async def video(request: Request):
 # score = clamp(100 - weighted_per_hour * SCORE_K, 0, 100), with SCORE_K = 2.
 # So one high-severity incident per hour costs 10 points, ten per hour drives the
 # score to 0. Window = the span from the oldest buffered event to now, at least
-# 1 hour and at most 24 hours, so a fresh server is not punished by a tiny window.
+# 1 hour and at most `hours` (default 24), so a fresh server is not punished by a tiny window.
 SEVERITY_WEIGHT = {"low": 1, "medium": 3, "high": 5}
 SCORE_K = 2.0
 
@@ -139,22 +167,23 @@ def _parse_ts(ts: str) -> datetime:
 
 
 @app.get("/summary")
-def summary():
+def summary(hours: float = Query(24, gt=0, le=24 * 31)):
+    """Stats over the last `hours` (default 24; 168 for the week)."""
     now = datetime.now(timezone.utc)
-    events = bus.recent(500)
-    cutoff = now - timedelta(hours=24)
+    events = bus.recent(bus.RECENT_MAX)
+    cutoff = now - timedelta(hours=hours)
     window = [e for e in events if _parse_ts(e.timestamp) >= cutoff]
     if window:
         oldest = min(_parse_ts(e.timestamp) for e in window)
-        hours = max(1.0, (now - oldest).total_seconds() / 3600)
+        span = max(1.0, (now - oldest).total_seconds() / 3600)
     else:
-        hours = 1.0
+        span = 1.0
     weighted = sum(SEVERITY_WEIGHT[e.severity] for e in window)
-    per_hour = weighted / hours
+    per_hour = weighted / span
     score = max(0.0, min(100.0, 100.0 - per_hour * SCORE_K))
     return {
         "total": len(window),
-        "window_hours": round(hours, 2),
+        "window_hours": round(span, 2),
         "by_type": dict(Counter(e.type for e in window)),
         "by_zone": dict(Counter(e.zone for e in window)),
         "by_camera": dict(Counter(e.camera for e in window)),

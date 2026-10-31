@@ -63,3 +63,22 @@ uv run --with imageio-ffmpeg python scripts/make_samples.py
 - `app/mock.py` mock event source
 - `app/main.py` the API
 - `app/cv/` live CV pipeline (separate work)
+
+
+## Reliability
+
+- **Producer supervision:** if the CV pipeline (or mock) crashes, the error is logged and it restarts with backoff (1, 2, 5, 10, 30 s). The API keeps serving.
+- **Persistence:** every event is appended to `backend/data/events.jsonl` (override with `EVENTS_LOG`) and replayed on startup, so incidents survive restarts. Corrupt lines are skipped.
+- **Back-pressure:** each stream client has a bounded queue (256). A slow client drops its oldest events instead of growing memory.
+- **MJPEG:** `/video` only sends a frame when it changed.
+
+## Time windows
+
+- `GET /events/recent?hours=168&limit=500`: incidents from the last week (for the weekly summary).
+- `GET /summary?hours=168`: stats over the last week (default 24 h).
+
+## Tests
+
+```bash
+cd backend && uv run --group dev pytest -q
+```
