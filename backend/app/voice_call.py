@@ -310,8 +310,78 @@ async def vapi_call(to: str, text: str, client=None) -> str:
     return f"placed {r.json().get('id', '')}"
 
 
+# ---- AgentPhone (hosted AI voice calls) --------------------------------------------------------------
+
+AGENTPHONE_API = "https://api.agentphone.ai/v1"
+
+
+def _items(data) -> list:
+    if isinstance(data, list):
+        return data
+    for k in ("data", "items", "agents", "results"):
+        if isinstance(data.get(k), list):
+            return data[k]
+    return []
+
+
+def agentphone_body(agent_id: str, to: str, text: str) -> dict:
+    return {
+        "agentId": agent_id,
+        "toNumber": to,
+        "initialGreeting": text,
+        "systemPrompt": "You are saesr, a warehouse safety system. You have just read a safety alert to the floor "
+                        "manager. Do not add anything. If they ask a question, answer in one short sentence from the alert.",
+        "callScreeningIdentity": "saesr safety alert",
+        "callScreeningPurpose": "Urgent workplace safety escalation for the floor manager",
+    }
+
+
+async def agentphone_call(to: str, text: str, client=None) -> str:
+    """Place the call, then hang up once the briefing has been spoken (it is one-way by design)."""
+    import httpx
+
+    c = client or httpx.AsyncClient(timeout=20)
+    h = {"authorization": f"Bearer {_env('AGENTPHONE_API_KEY')}"}
+    agent_id = _env("AGENTPHONE_AGENT_ID")
+    if not agent_id:
+        r = await c.get(f"{AGENTPHONE_API}/agents", headers=h)
+        agents = _items(r.json()) if r.status_code < 300 else []
+        if not agents:
+            return f"rejected_no_agent: {r.status_code} {r.text[:150]}"
+        agent_id = agents[0]["id"]
+    r = await c.post(f"{AGENTPHONE_API}/calls", headers=h, json=agentphone_body(agent_id, to, text))
+    if r.status_code >= 300:
+        return f"rejected_{r.status_code}: {r.text[:200]}"
+    call_id = r.json().get("id", "")
+    asyncio.create_task(_agentphone_hangup(c, h, call_id, text, own_client=client is None))
+    return f"placed {call_id}"
+
+
+async def _agentphone_hangup(c, h: dict, call_id: str, text: str, own_client: bool) -> None:
+    speak_s = len(text.split()) / 2.4 + 3  # ~145 words a minute, plus a breath
+    try:
+        for _ in range(60):  # wait up to ~60 s for the manager to pick up
+            r = await c.get(f"{AGENTPHONE_API}/calls/{call_id}", headers=h)
+            status = (r.json().get("status") or "").replace("-", "_") if r.status_code < 300 else ""
+            if status in ("completed", "failed", "ended", "no_answer", "busy", "canceled"):
+                return
+            if status == "in_progress":
+                await asyncio.sleep(speak_s)
+                await c.post(f"{AGENTPHONE_API}/calls/{call_id}/end", headers=h)
+                log.info("agentphone call %s: briefing spoken, hung up", call_id)
+                return
+            await asyncio.sleep(1)
+    except Exception as err:
+        log.warning("agentphone hangup for %s failed: %s", call_id, err)
+    finally:
+        if own_client:
+            await c.aclose()
+
+
 async def call(to: str, text: str, line: Optional[str] = None) -> str:
-    """Vapi when VAPI_API_KEY and VAPI_PHONE_NUMBER_ID are set, else Photon SIP."""
+    """AgentPhone, else Vapi, else Photon SIP, whichever is configured."""
+    if _env("AGENTPHONE_API_KEY"):
+        return await agentphone_call(to, text)
     if _env("VAPI_API_KEY") and _env("VAPI_PHONE_NUMBER_ID"):
         return await vapi_call(to, text)
     return await asyncio.to_thread(place_call, to, text, line)
@@ -321,4 +391,8 @@ if __name__ == "__main__":
     import sys
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
-    print(asyncio.run(call(sys.argv[1], sys.argv[2])))
+    async def main():
+        print(await call(sys.argv[1], sys.argv[2]))
+        await asyncio.sleep(70)  # let the hang-up task finish when run from the command line
+
+    asyncio.run(main())

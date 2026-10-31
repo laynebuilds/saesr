@@ -84,3 +84,42 @@ def test_vapi_call_speaks_the_briefing_then_hangs_up(monkeypatch):
     assert seen[0].headers["authorization"] == "Bearer vk" and body["phoneNumberId"] == "pn1"
     assert body["customer"] == {"number": "+12485550100"} and body["assistant"]["firstMessage"] == "Worker number 1. Goodbye."
     assert {"type": "endCall"} in body["assistant"]["model"]["tools"] and body["assistant"]["maxDurationSeconds"] <= 60
+
+
+def test_agentphone_call_picks_agent_speaks_briefing_and_hangs_up(monkeypatch):
+    from app import voice_call
+
+    monkeypatch.setenv("AGENTPHONE_API_KEY", "sk_live_x")
+    monkeypatch.delenv("AGENTPHONE_AGENT_ID", raising=False)
+    seen = []
+    statuses = iter(["ringing", "in-progress"])
+
+    def handler(req: httpx.Request):
+        seen.append((req.method, req.url.path))
+        if req.url.path == "/v1/agents":
+            return httpx.Response(200, json={"data": [{"id": "agt_1"}]})
+        if req.method == "POST" and req.url.path == "/v1/calls":
+            body = json.loads(req.content)
+            assert body["agentId"] == "agt_1" and body["toNumber"] == "+12485550100"
+            assert body["initialGreeting"] == "Worker number 1. Goodbye." and body["systemPrompt"]
+            return httpx.Response(201, json={"id": "call_9", "status": "queued"})
+        if req.method == "GET":
+            return httpx.Response(200, json={"id": "call_9", "status": next(statuses, "in-progress")})
+        return httpx.Response(200, json={"id": "call_9", "status": "ending"})
+
+    async def scenario():
+        monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
+        out = await voice_call.agentphone_call("+12485550100", "Worker number 1. Goodbye.", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        for _ in range(50):
+            await _real_sleep(0)
+        return out
+
+    assert asyncio.run(scenario()) == "placed call_9"
+    assert ("POST", "/v1/calls/call_9/end") in seen
+
+
+_real_sleep = asyncio.sleep
+
+
+async def _fast_sleep(_s):
+    await _real_sleep(0)
