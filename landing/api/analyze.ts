@@ -53,6 +53,42 @@ const RequestSchema = z.object({
 })
 
 
+// A violation found in uploaded footage becomes a real detection: its frames go to Storage and a row
+// goes to web_detections, which the floor backend picks up and runs through the full pipeline
+// (actors, relay agents over Agent Relay, manager call or text by severity).
+const PIPELINE_TYPES = new Set(['unsafe_lift', 'zone_breach', 'missing_hairnet', 'missing_gloves'])
+
+async function logDetection(input: z.infer<typeof RequestSchema>, analysis: z.infer<typeof AnalysisSchema>) {
+  const env = (globalThis as any).process?.env ?? {}
+  const url = (env.SUPABASE_URL ?? '').replace(/\/$/, '')
+  const key = env.SUPABASE_SECRET_KEY
+  const v = analysis.violations.filter((x) => PIPELINE_TYPES.has(x.type)).sort((a, b) => b.severity - a.severity)[0]
+  if (analysis.verdict !== 'violation' || !v) return { logged: false, reason: 'no pipeline violation' }
+  if (!url || !key) return { logged: false, reason: 'Supabase not configured' }
+  const headers = { apikey: key, authorization: `Bearer ${key}` }
+  const stamp = `web-${Date.now()}`
+  const picks = (v.frame_indices.length ? v.frame_indices : [0]).slice(0, 3)
+  const keyframes: string[] = []
+  for (const [n, i] of picks.entries()) {
+    const f = input.frames[Math.min(i, input.frames.length - 1)]
+    const path = `site-demo/${stamp}_k${n}.jpg`
+    const r = await fetch(`${url}/storage/v1/object/keyframes/${path}`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'image/jpeg', 'x-upsert': 'true' },
+      body: Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0)),
+    })
+    if (r.ok) keyframes.push(`${url}/storage/v1/object/public/keyframes/${path}`)
+  }
+  const r = await fetch(`${url}/rest/v1/web_detections`, {
+    method: 'POST',
+    headers: { ...headers, 'content-type': 'application/json', prefer: 'return=representation' },
+    body: JSON.stringify({ type: v.type, severity: v.severity, confidence: v.confidence, summary: v.description, keyframes }),
+  })
+  if (!r.ok) return { logged: false, reason: `log failed ${r.status}` }
+  const [row] = await r.json()
+  return { logged: true, id: row?.id, type: v.type, severity: v.severity }
+}
+
 export default async function handler(req: any, res: any) {
   const send = (status: number, body: unknown) => res.status(status).json(body)
   if (req.method !== 'POST') return send(405, { error: 'POST only' })
@@ -95,7 +131,9 @@ export default async function handler(req: any, res: any) {
       if (msg.stop_reason === 'refusal') return send(422, { error: 'The model declined to review this footage.' })
       const text = msg.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('')
       const analysis = AnalysisSchema.parse(JSON.parse(text))
+      const detection = await logDetection(input, analysis).catch((err) => ({ error: (err as Error).message }))
       send(200, {
+        detection,
         analysis,
         model: 'vision model system',
         latency_ms: Date.now() - started,

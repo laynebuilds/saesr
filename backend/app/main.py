@@ -57,7 +57,7 @@ def _import_actors():
 
 
 actors = _import_actors()
-from . import agents, bus, mock, photon_alert, relay_feed, supabase_sink  # noqa: E402
+from . import agents, bus, mock, photon_alert, relay_feed, supabase_sink, web_inbox  # noqa: E402
 from .agents import activity  # noqa: E402
 from .schema import CAMERAS, SITE_ID, VIOLATIONS, ActorMessage, Event, now_iso  # noqa: E402
 
@@ -134,11 +134,12 @@ async def lifespan(app: FastAPI):
     sink = supabase_sink.start()  # no-op unless SUPABASE_URL and SUPABASE_SECRET_KEY are set
     agents_task = agents.start()  # old Agent Relay supervisor: off unless AGENTS_SUPERVISOR=1
     feed = relay_feed.start()  # relay agents' steps -> /agents/activity for the dashboard
+    inbox = web_inbox.start()  # violations found by "Review footage" on saesr.com enter the pipeline
     alerts = photon_alert.start()  # iMessage to the manager and worker; off unless PHOTON_* and phones are set
     try:
         yield
     finally:
-        for t in (task, bridge, sink, agents_task, feed, alerts, *[r["task"] for r in _replays.values()]):
+        for t in (task, bridge, sink, agents_task, feed, alerts, inbox, *[r["task"] for r in _replays.values()]):
             if t:
                 t.cancel()
         _replays.clear()
