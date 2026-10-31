@@ -415,6 +415,26 @@ def test_admin_replay_start_replace_list_stop(client, monkeypatch):
     assert client.get("/admin/replay").json() == []
 
 
+def test_admin_replay_without_loop_plays_once(client, monkeypatch):
+    calls = []
+
+    class OnceThrough:
+        @staticmethod
+        async def run(publish, set_frame, source, camera_id="cam-01", loop=False):
+            calls.append(loop)  # returns at end of file, like the real pipeline with loop=False
+
+    monkeypatch.setattr(main, "_load_pipeline", lambda: OnceThrough)
+    old = main.RESTART_BACKOFF_S
+    main.RESTART_BACKOFF_S = (0,)
+    try:
+        client.post("/admin/replay", json={"camera_id": "cam-01", "source": "bad_lift.mp4", "loop": False})
+        for _ in range(20):
+            client.get("/health")
+    finally:
+        main.RESTART_BACKOFF_S = old
+    assert calls == [False]  # never restarted, so a one-shot clip cannot fake a recurrence
+
+
 # ---- producer
 
 

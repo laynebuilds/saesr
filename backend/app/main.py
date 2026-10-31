@@ -483,8 +483,9 @@ def _replay_view(camera_id: str, r: dict) -> dict:
 
 @app.post("/admin/replay")
 async def admin_replay_start(req: ReplayRequest, x_admin_token: Optional[str] = Header(None)):
-    """Run the CV pipeline on a video file (or camera index) for one camera, supervised
-    (restarts on crash). Replaces any running replay for that camera."""
+    """Run the CV pipeline on a video file (or camera index) for one camera. loop=true is supervised
+    (restarts on crash, plays forever); loop=false plays the file once and stops. Replaces any running
+    replay for that camera."""
     _check_token("ADMIN_TOKEN", x_admin_token)
     pipeline = _load_pipeline()
     old = _replays.pop(req.camera_id, None)
@@ -494,7 +495,7 @@ async def admin_replay_start(req: ReplayRequest, x_admin_token: Optional[str] = 
     def make():
         return pipeline.run(bus.publish, bus.set_frame, req.source, camera_id=req.camera_id, loop=req.loop)
 
-    task = asyncio.create_task(_supervise(make, name=f"replay {req.camera_id}"))
+    task = asyncio.create_task(_supervise(make, name=f"replay {req.camera_id}") if req.loop else make())
     _replays[req.camera_id] = {"task": task, "source": req.source, "loop": req.loop, "started_at": now_iso()}
     return {"ok": True, "replaced": old is not None, **_replay_view(req.camera_id, _replays[req.camera_id])}
 

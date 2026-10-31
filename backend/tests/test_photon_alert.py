@@ -45,8 +45,10 @@ def test_send_finds_the_conversation_and_is_idempotent(monkeypatch):
     posts = []
 
     def handler(req: httpx.Request):
+        if req.method == "GET" and req.url.path.endswith("/users"):
+            return httpx.Response(200, json={"items": [{"id": "u1", "kind": "human", "handle": "+1 (415) 555-0100"}, {"id": "line", "kind": "agent", "handle": "+16280000000"}]})
         if req.method == "GET":
-            return httpx.Response(200, json={"items": [{"sentBy": {"handle": "+1 (415) 555-0100"}, "receivedBy": {"id": "line"}, "space": {"id": "sp"}}]})
+            return httpx.Response(200, json={"items": [{"id": "sp", "participantIds": ["line", "u1"]}]})
         posts.append(req)
         return httpx.Response(200, json={})
 

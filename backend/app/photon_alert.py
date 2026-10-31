@@ -111,15 +111,22 @@ class Photon:
         return r.json() if r.content else {}
 
     async def conversation(self, phone: str) -> Optional[tuple[str, str]]:
-        """(spaceId, senderId) for a phone that has texted the line; cached."""
+        """(spaceId, senderId) for a phone that has texted the line: its direct space with an agent line. Cached."""
         want = normalize(phone)
         if want in self.convos:
             return self.convos[want]
-        data = await self._req("GET", "/messages?direction=received&order=desc&pageSize=100")
-        for m in data.get("items") or []:
-            if normalize((m.get("sentBy") or {}).get("handle", "")) == want and m.get("receivedBy"):
-                self.convos[want] = (m["space"]["id"], m["receivedBy"]["id"])
-                return self.convos[want]
+        users = (await self._req("GET", "/users")).get("items") or []
+        by_id = {u["id"]: u for u in users}
+        human = next((u for u in users if u.get("kind") == "human" and normalize(u.get("handle", "")) == want), None)
+        if not human:
+            return None
+        for space in (await self._req("GET", "/spaces")).get("items") or []:
+            ids = space.get("participantIds") or []
+            if human["id"] in ids:
+                agent = next((i for i in ids if (by_id.get(i) or {}).get("kind") == "agent"), None)
+                if agent:
+                    self.convos[want] = (space["id"], agent)
+                    return self.convos[want]
         return None
 
     async def send(self, phone: str, text: str, key: str) -> bool:
