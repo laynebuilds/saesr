@@ -209,8 +209,9 @@ class Pipeline:
                 self.next_due = due + self.interval
                 self.last_t = t
                 h, w = frame.shape[:2]
-                if w > MAX_WIDTH:
-                    frame = cv2.resize(frame, (MAX_WIDTH, int(h * MAX_WIDTH / w)))
+                if max(w, h) > MAX_WIDTH:  # longest side, so portrait phone video is scaled too
+                    k = MAX_WIDTH / max(w, h)
+                    frame = cv2.resize(frame, (int(w * k), int(h * k)))
                 return frame, t
 
     # ---- one frame ----

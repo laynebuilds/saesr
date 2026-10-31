@@ -4,7 +4,7 @@ Camera or video in, face-blurred annotated live frames plus contract v2 `Event`s
 
 | Event | When |
 | --- | --- |
-| `unsafe_lift` | Stoop lift held 1.0 s: trunk (shoulder mid to hip mid) more than 45 deg from vertical, worst leg hip-knee-ankle above 150 deg (straight legs), legs roughly vertical (not lying or sitting), and wrists low (lowest wrist at or below mid thigh). A squat lift (bent knees) never fires. Hidden joints are "unknown", never evidence. `zone_id` = zone containing the feet, else the camera default. |
+| `unsafe_lift` | Stoop lift held 0.8 s: trunk (shoulder mid to hip mid) more than 45 deg from vertical, worst leg hip-knee-ankle above 115 deg (not squatting), legs roughly vertical (not lying or sitting), and wrists low (lowest wrist at least 30% of the way down the thigh). Tuned on real side-on phone footage: squat lifts kept the back under ~38 deg with knees 73 to 116 and never fired; stoop lifts (back 46 to 76 deg, knees 120 to 156) fired every time, latency 1.4 to 1.6 s. Hidden joints are "unknown", never evidence. `zone_id` = zone containing the feet, else the camera default. |
 | `zone_breach` | Ankle point (or box bottom centre) inside a restricted polygon (`zone-machine-a`) for 1.0 s. A box cut by the bottom edge with no visible ankle is unknown. |
 | `compliant_observation` | A tracked person seen in a zone with no violation for 1 s. At most one per camera+zone every 5 s. The verifier relies on these. |
 
@@ -46,7 +46,7 @@ Faces are blurred (pixelate + Gaussian) from the head keypoints (nose, eyes, ear
 
 ## Env overrides
 
-`POSE_MODEL`, `CV_DEVICE` (`mps`, `cpu`), `CV_DET_CONF`, `SAESR_CAMERA` (default `cam-01`), `ZONES_PATH`, `CLIPS_DIR`, `CV_PROCESS_FPS` (8), `CV_RING_S` (10), `LIFT_BACK_ANGLE_MIN` (45), `LIFT_KNEE_ANGLE_MIN` (150), `LIFT_LEG_ANGLE_MAX` (35), `LIFT_WRIST_THIGH_FRAC` (0.5), `LIFT_SUSTAIN_S` (1.0), `LIFT_GAP_TOLERANCE_S`, `LIFT_HYSTERESIS_DEG` (5), `KPT_MIN_CONF` (0.5), `ZONE_DWELL_S` (1.0), `CV_DEBOUNCE_S` (5), `COMPLIANT_INTERVAL_S` (5), `COMPLIANT_MIN_S` (1), `CLIP_PRE_S` (5), `CLIP_POST_S` (5), `KEYFRAME_OFFSET_S` (2), `KEYFRAME_AFTER_S` (0.5), `FACE_PAD`, `FACE_FALLBACK_FRAC`. All live in `config.py`.
+`POSE_MODEL`, `CV_DEVICE` (`mps`, `cpu`), `CV_DET_CONF`, `SAESR_CAMERA` (default `cam-01`), `ZONES_PATH`, `CLIPS_DIR`, `CV_PROCESS_FPS` (8), `CV_RING_S` (10), `LIFT_BACK_ANGLE_MIN` (45), `LIFT_KNEE_ANGLE_MIN` (115), `LIFT_LEG_ANGLE_MAX` (35), `LIFT_WRIST_THIGH_FRAC` (0.3), `LIFT_SUSTAIN_S` (0.8), `LIFT_GAP_TOLERANCE_S`, `LIFT_HYSTERESIS_DEG` (5), `KPT_MIN_CONF` (0.5), `ZONE_DWELL_S` (1.0), `CV_DEBOUNCE_S` (5), `COMPLIANT_INTERVAL_S` (5), `COMPLIANT_MIN_S` (1), `CLIP_PRE_S` (5), `CLIP_POST_S` (5), `KEYFRAME_OFFSET_S` (2), `KEYFRAME_AFTER_S` (0.5), `FACE_PAD`, `FACE_FALLBACK_FRAC`. All live in `config.py`.
 
 ## Files
 

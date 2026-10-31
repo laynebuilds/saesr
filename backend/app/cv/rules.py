@@ -160,7 +160,7 @@ class LiftRule:
                         type="unsafe_lift",
                         person=person,
                         confidence=round(float(max(0.0, min(1.0, 0.5 * person.conf + 0.5 * margin))), 2),
-                        detail=f"back bent {pose.back_angle:.0f} degrees with straight legs "
+                        detail=f"stoop lift: back bent {pose.back_angle:.0f} degrees, legs not squatting "
                         f"(knee {pose.knee_angle:.0f} degrees), hands low",
                         onset_t=onset,
                         metrics={

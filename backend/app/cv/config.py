@@ -19,19 +19,21 @@ POSE_MODEL = os.environ.get("POSE_MODEL", str(BACKEND_DIR / "yolo11n-pose.pt"))
 DEVICE = os.environ.get("CV_DEVICE") or None  # None = ultralytics picks; "mps" for Apple GPU, "cpu", "0"
 DET_CONF = _f("CV_DET_CONF", 0.4)  # person detection confidence floor
 TRACKER = "bytetrack.yaml"  # ultralytics tracker; gives stable per-person ids across frames
-MAX_WIDTH = 1280  # frames wider than this are downscaled before inference (speed, clip size)
+MAX_WIDTH = 1280  # frames whose longest side exceeds this are downscaled before inference (speed, clip size)
 
 # ---- Sampling ----
 PROCESS_FPS = _f("CV_PROCESS_FPS", 8.0)  # frames per second sent through the model (5 to 10 is the target)
 RING_S = _f("CV_RING_S", 10.0)  # seconds of blurred, annotated frames kept in memory per camera
 
-# ---- Unsafe lift (stoop lift: bent back, straight legs, hands down low) ----
+# ---- Unsafe lift (stoop lift: bent back, legs not squatting, hands down low) ----
+# Tuned 10-31 on real side-on phone footage (samples/real, gitignored): squat lifts kept the back
+# under ~38 degrees with knees 73-116; stoop lifts bent the back 46-76 degrees with knees 120-156.
 LIFT_BACK_ANGLE_MIN = _f("LIFT_BACK_ANGLE_MIN", 45.0)  # trunk (shoulder mid -> hip mid) angle from vertical
-LIFT_KNEE_ANGLE_MIN = _f("LIFT_KNEE_ANGLE_MIN", 150.0)  # hip-knee-ankle angle above which a leg is straight
+LIFT_KNEE_ANGLE_MIN = _f("LIFT_KNEE_ANGLE_MIN", 115.0)  # hip-knee-ankle angle above which a leg is straight
 LIFT_LEG_ANGLE_MAX = _f("LIFT_LEG_ANGLE_MAX", 35.0)  # hip -> ankle from vertical; above this = lying/sitting
 # Wrists low: lowest visible wrist at or below this fraction of the way from hip to knee (0.5 = mid thigh).
-LIFT_WRIST_THIGH_FRAC = _f("LIFT_WRIST_THIGH_FRAC", 0.5)
-LIFT_SUSTAIN_S = _f("LIFT_SUSTAIN_S", 1.0)  # posture must hold this long before it is a violation
+LIFT_WRIST_THIGH_FRAC = _f("LIFT_WRIST_THIGH_FRAC", 0.3)
+LIFT_SUSTAIN_S = _f("LIFT_SUSTAIN_S", 0.8)  # posture must hold this long before it is a violation
 LIFT_GAP_TOLERANCE_S = _f("LIFT_GAP_TOLERANCE_S", 0.35)  # hidden joints for less than this keep the timer
 LIFT_HYSTERESIS_DEG = _f("LIFT_HYSTERESIS_DEG", 5.0)  # once in the window, thresholds relax by this
 KPT_MIN_CONF = _f("KPT_MIN_CONF", 0.5)  # keypoints below this confidence are treated as not visible

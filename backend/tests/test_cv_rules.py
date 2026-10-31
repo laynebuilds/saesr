@@ -143,9 +143,11 @@ def test_upright_never_fires():
 
 
 def test_correct_squat_never_fires():
-    # deep squat with a fairly bent back: knees bent means it is a safe lift
-    assert not run_rule(LiftRule(), [[P(1, skeleton(50, 90))]] * 100)
-    assert not run_rule(LiftRule(), [[P(1, skeleton(65, 130))]] * 100)
+    # real squat lifts (samples/real, 10-31): back under ~38 degrees, knees 73 to 116
+    assert not run_rule(LiftRule(), [[P(1, skeleton(38, 75))]] * 100)
+    assert not run_rule(LiftRule(), [[P(1, skeleton(50, 90))]] * 100)  # deep knee bend is safe even if leaning
+    # real stoop lifts bend the knees a little at the bottom (74 degrees back, knee 124): still unsafe
+    assert run_rule(LiftRule(), [[P(1, skeleton(74, 124))]] * 100)
 
 
 def test_missing_keypoints_never_fire():
@@ -254,10 +256,10 @@ def test_zones_json_loads():
     assert unknown.zones
 
 
-def test_sustain_is_one_second():
-    assert LIFT_SUSTAIN_S == 1.0
-    # 0.9 s of a clear stoop lift never fires
-    assert not run_rule(LiftRule(), [[P(1, skeleton(62, 172))]] * 22)
+def test_sustain_is_point_eight_seconds():
+    assert LIFT_SUSTAIN_S == 0.8  # real stoop lifts held the posture about 1 s
+    # 0.6 s of a clear stoop lift never fires
+    assert not run_rule(LiftRule(), [[P(1, skeleton(62, 172))]] * 15)
 
 
 def test_wrists_high_never_fires():
@@ -445,7 +447,7 @@ def test_run_end_to_end(tmp_path, monkeypatch):
     assert len(lift) == 1
     ev = lift[0]
     assert ev.zone_id == "zone-pack-line"
-    assert abs(ev.metrics["torso_angle_deg"] - 62) < 1 and ev.metrics["duration_s"] >= 1.0
+    assert abs(ev.metrics["torso_angle_deg"] - 62) < 1 and ev.metrics["duration_s"] >= 0.8
     assert ev.clip_url == f"/clips/{ev.event_id}.mp4" and (tmp_path / f"{ev.event_id}.mp4").stat().st_size > 0
     assert len(ev.keyframes) == 3 and all((tmp_path / u.split("/")[-1]).exists() for u in ev.keyframes)
     # published ~0.5 s after the trigger (t = 7.0 s), long before the 5 s post-roll ends (t = 12 s)
