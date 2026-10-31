@@ -30,7 +30,9 @@ export function FixReportCard({
   if (r.outcome === 'not_needed') return null
   const head =
     r.outcome === 'verified'
-      ? { icon: CheckCircle2, color: 'var(--ready)', text: `Fixed and verified${r.time_to_fix_ms ? ` in ${duration(r.time_to_fix_ms)}` : ''}` }
+      ? inc.low_confidence
+        ? { icon: CheckCircle2, color: 'var(--ready)', text: 'Resolved: no repeat during the window (low confidence)' }
+        : { icon: CheckCircle2, color: 'var(--ready)', text: `Fixed and verified${r.time_to_fix_ms ? ` in ${duration(r.time_to_fix_ms)}` : ''}` }
       : r.outcome === 'recurring'
         ? { icon: RotateCw, color: 'var(--critical)', text: 'Fix did not hold: the violation was seen again' }
         : { icon: Loader2, color: 'var(--accent)', text: r.pending.some((a) => a.status === 'awaiting_approval') ? 'Waiting for a human approval' : 'Fix in progress' }

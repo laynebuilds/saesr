@@ -16,7 +16,14 @@ export const STATUS_COLOR: Record<IncidentStatus, string> = {
   closed: 'var(--text-dim)',
 }
 
-export function StatusChip({ status, className }: { status: IncidentStatus; className?: string }) {
+export function StatusChip({ status, lowConfidence, className }: { status: IncidentStatus; lowConfidence?: boolean; className?: string }) {
+  if (status === 'resolved' && lowConfidence)
+    return (
+      <Pill className={cn('text-ok', className)} title="No repeat during the window, but no compliant observation either">
+        <Dot color="var(--ready)" />
+        Resolved, low confidence
+      </Pill>
+    )
   if (status === 'resolved') return <VerifiedBadge className={className} />
   return (
     <Pill

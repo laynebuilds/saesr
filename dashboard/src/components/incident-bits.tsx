@@ -28,7 +28,7 @@ export function IncidentRow({ inc, compact }: { inc: IncidentView; compact?: boo
           {camShort(inc.event.camera)} · {ago(inc.event.timestamp)}
         </div>
       </div>
-      <StatusChip status={inc.status} />
+      <StatusChip status={inc.status} lowConfidence={inc.low_confidence} />
     </Link>
   )
 }
@@ -189,7 +189,7 @@ export function IncidentHeader({ inc }: { inc: IncidentView }) {
     <div className="flex flex-wrap items-center gap-2">
       <h1 className="mr-2 text-xl font-semibold tracking-tight">{TYPE_LABEL[inc.event.type]}</h1>
       <SeverityBadge severity={inc.severity} from={inc.severity_from} />
-      <StatusChip status={inc.status} />
+      <StatusChip status={inc.status} lowConfidence={inc.low_confidence} />
     </div>
   )
 }

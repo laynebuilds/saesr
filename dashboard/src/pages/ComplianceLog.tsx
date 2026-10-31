@@ -183,7 +183,7 @@ export function ComplianceLog() {
                         <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">{i.actions.map((x) => x.approved_by).filter(Boolean).join(', ') || 'auto'}</td>
                         <td className="tnum whitespace-nowrap px-3 py-2 font-mono text-xs">{duration(r.time_to_fix_ms)}</td>
                         <td className="px-3 py-2">
-                          <StatusChip status={i.status} />
+                          <StatusChip status={i.status} lowConfidence={i.low_confidence} />
                         </td>
                       </tr>
                     )

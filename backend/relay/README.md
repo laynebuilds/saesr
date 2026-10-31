@@ -23,3 +23,11 @@ scripts/run_relay.sh                  # http://127.0.0.1:8100/health
 - **Agent Relay:** with `RELAY_LOCAL=1` (or `RELAY_API_KEY`), each step also posts to `#safety-floor` as its own agent.
 - **Timing:** latency and token counts for every step are in the trace and in `output`.
 - **Prompts** are versioned in `prompts/v1/`.
+
+Rehearsal: `uv run python -m relay.demo_event missing_hairnet --compliant 20` sends one detection whose keyframes
+are real footage stills (the backend's own mock samples are synthetic, so triage correctly dismisses
+them), then after 20 s a compliant observation in the same zone, which verifies the fix. Run the backend with a long `MOCK_EVERY` (e.g. 600) so its mock events do not mark the demo
+incident recurring.
+
+Measured on Oct 31 (real frames): triage 1.5 to 2.9 s (Haiku 4.5), coach 3.2 s and fixer about
+2.6 s at low effort (Sonnet 5.5).

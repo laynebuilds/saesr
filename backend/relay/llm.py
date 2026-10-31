@@ -60,8 +60,12 @@ async def structured(model: str, system: str, content: list, schema: Type[T], ti
                 resp = await asyncio.wait_for(c.messages.parse(**kwargs), timeout_s)
             else:
                 # Sonnet 5.5: server-side fallback re-runs a declined request on Anthropic's recommended model.
+                # Low effort: short structured writing; measured ~2.6 s vs ~3.5 s at the default.
                 resp = await asyncio.wait_for(
-                    c.beta.messages.parse(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kwargs), timeout_s
+                    c.beta.messages.parse(
+                        betas=["server-side-fallback-2026-07-01"], fallbacks="default", output_config={"effort": "low"}, **kwargs
+                    ),
+                    timeout_s,
                 )
             if resp.stop_reason == "refusal":
                 raise LLMUnavailable("the model declined this request")

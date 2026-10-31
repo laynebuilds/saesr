@@ -316,7 +316,10 @@ async def run_reporter(s: RelayStart, event: dict, inc: dict) -> None:
         "",
         f"Incident: {CONFIG.dashboard_url}/incidents/{s.incident_id}",
     ]
-    outcome = "fixed and verified" if inc.get("status") == "resolved" else str(inc.get("status"))
+    if inc.get("status") == "resolved":
+        outcome = "resolved, no repeat seen (low confidence)" if inc.get("low_confidence") else "fixed and verified"
+    else:
+        outcome = str(inc.get("status"))
     subject = f"[saesr] {label(event['type']).capitalize()} in {zone_label(event['zone_id'])}: {outcome}"
     if sev <= 3:  # severity 1 to 3: a short line, not a full report
         lines = [lines[0], f"Outcome: {outcome}.", lines[-1]]
