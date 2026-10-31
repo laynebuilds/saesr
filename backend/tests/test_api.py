@@ -462,3 +462,102 @@ def test_mock_producer_sets_per_camera_frames(monkeypatch):
 
     asyncio.run(scenario())
     assert bus.latest_frame("cam-02") is not None and bus.recent()[-1].camera_id == "cam-02"
+
+
+# ---- scripts/mock_events.py
+
+import importlib.util  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from pydantic import TypeAdapter  # noqa: E402
+
+from app.schema import ACTION_TIER, ActorMessage  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("mock_events", Path(__file__).resolve().parent.parent / "scripts" / "mock_events.py")
+mock_events = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(mock_events)
+_msg = TypeAdapter(ActorMessage)
+
+
+def test_mock_script_demo_events_are_valid_v2():
+    events = mock_events.demo_events("http://h:8000")
+    parsed = [Event.model_validate(e) for e in events]
+    assert [e.type for e in parsed] == ["unsafe_lift", "zone_breach", "missing_hairnet", "missing_gloves",
+                                        "unsafe_lift", "compliant_observation"]
+    assert parsed[0].event_id == parsed[4].event_id  # the duplicate
+    assert len({e.event_id for e in parsed}) == 5
+    assert parsed[2].camera_id == "cam-02" and parsed[2].zone_id == "zone-handwash"
+    assert parsed[1].zone_id == "zone-machine-a"
+    assert all(len(e.keyframes) == 3 and e.keyframes[0].startswith("http://h:8000/samples/") for e in parsed)
+    for e in parsed:  # placeholder media really exists
+        assert (main.SAMPLES_DIR / e.keyframes[0].rsplit("/", 1)[1]).exists()
+        assert (main.SAMPLES_DIR / e.clip_url.rsplit("/", 1)[1]).exists()
+
+
+def test_mock_script_relay_messages_are_valid_actor_messages():
+    event = mock_events.event_payload("unsafe_lift")
+    all_msgs = []
+    for step in mock_events.STEPS:
+        msgs = mock_events.step_messages(step, "inc_9", event)
+        for m in msgs:
+            _msg.validate_python(m)
+        all_msgs += msgs
+    updates = [m for m in all_msgs if m["kind"] == "relay_update"]
+    assert [m["step"] for m in updates] == list(mock_events.STEPS)
+    assert updates[0]["status"] == "confirmed" and updates[0]["output"]["severity"] == 4
+    assert all(m["trace"]["agent"] == m["step"] and m["trace"]["started_at"] for m in updates)
+    actions = {m["action"]["kind"]: m["action"] for m in all_msgs if m["kind"] == "action_update"}
+    assert actions["assign_coaching"]["status"] == "done" and ACTION_TIER["assign_coaching"] == 0
+    assert actions["open_corrective_record"]["status"] == "done"
+    assert actions["slow_machine"]["status"] == "awaiting_approval" and ACTION_TIER["slow_machine"] == 2
+    hygiene = mock_events.step_messages("fixer", "inc_h", mock_events.event_payload("missing_hairnet"))
+    assert "flag_batch_hold" in [m["action"]["kind"] for m in hygiene if m["kind"] == "action_update"]
+
+
+def test_mock_script_run_once_against_api(client):
+    api = mock_events.Api("", client=client)
+    results = mock_events.run_once(api)
+    assert len(results) == 6 and sum(r["duplicate"] for r in results) == 1
+    assert len(bus.recent()) == 5
+
+
+def test_mock_script_stand_in_relay_full_cycle(client, fake_actors):
+    api = mock_events.Api("", client=client)
+    followups = []
+    relay = mock_events.StandInRelay(api, step_delay=0, after_cycle=lambda inc, ev_: followups.append((inc, ev_)))
+    server = relay.serve(0)
+    try:
+        event = mock_events.event_payload("unsafe_lift")
+        start = {"incident_id": "inc_1", "camera_id": "cam-01", "step": "triage", "event": event}
+        port = server.server_address[1]
+        r = httpx_post(f"http://127.0.0.1:{port}/relay/start", start)
+        assert r.status_code == 200 and r.json()["accepted"] == "inc_1"
+        assert httpx_post(f"http://127.0.0.1:{port}/relay/start", start).json()["already_running"] is True
+        assert httpx_post(f"http://127.0.0.1:{port}/relay/start", {"bad": 1}).status_code == 422
+        wait_for(lambda: followups)
+        kinds = [(m["kind"], m.get("step") or m["action"]["kind"]) for _, m in fake_actors.sent]
+        assert kinds[0] == ("relay_update", "triage") and kinds[-1] == ("relay_update", "reporter")
+        assert ("action_update", "slow_machine") in kinds and all(c == "cam-01" for c, _ in fake_actors.sent)
+        # the actor asks the relay to execute the approved gated action
+        slow = next(m["action"] for _, m in fake_actors.sent if m["kind"] == "action_update" and m["action"]["kind"] == "slow_machine")
+        fake_actors.sent.clear()
+        r = httpx_post(f"http://127.0.0.1:{port}/relay/start", {**start, "step": "fixer", "action": {**slow, "status": "approved"}})
+        assert r.json()["executing"] == slow["action_id"]
+        wait_for(lambda: fake_actors.sent)
+        assert fake_actors.sent[0][1]["action"]["status"] == "done"
+        assert client.get("/mock/machine/calls").json()[-1]["request"]["machine_id"] == "machine-a"
+    finally:
+        server.shutdown()
+
+
+def httpx_post(url, body):
+    import httpx
+    return httpx.post(url, json=body, timeout=5)
+
+
+def wait_for(pred, timeout=5.0):
+    deadline = time.time() + timeout
+    while not pred():
+        assert time.time() < deadline, "condition not met in time"
+        time.sleep(0.02)
