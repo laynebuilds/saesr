@@ -11,54 +11,31 @@ from durable_actors.generated import UNSET as _UNSET, Unset as _Unset, arguments
 from . import _site_models as _models
 
 class Stub:
-    """One warehouse. Single writer for its incidents, counters, score and open alerts.
-    
-    Serialized execution: record, acknowledge and camera_changed never overlap for the same
-    Site id. Many Camera actors call Site.record concurrently; the runtime queues those calls
-    and applies them one at a time, so no update is ever lost and every broadcast snapshot is
-    a consistent state (counters, incidents and open alerts always agree).
-    """
+    """Roll-up of every camera at one site. Cameras push their full state on every change."""
     def __init__(self, actor_id: str, transport: _ActorTransport | None = None) -> None:
         """Address an actor. An injected transport remains caller-owned."""
         self._actor_id = actor_id
         self._transport = transport if transport is not None else _default_client()
 
-    def acknowledge(_self, event_id: _models.RpcMethodAcknowledgeParameter0, by: _models.RpcMethodAcknowledgeParameter1) -> _models.RpcMethodAcknowledgeResult:
-        """Close an open alert. None if the id is unknown or was already acknowledged."""
-        _args = _arguments([_argument(event_id, _TypeAdapter(_models.RpcMethodAcknowledgeParameter0)), _argument(by, _TypeAdapter(_models.RpcMethodAcknowledgeParameter1))], [_UNSET, _UNSET])
-        _result = _self._transport.invoke('Site', _self._actor_id, 'acknowledge', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodAcknowledgeResult] = _TypeAdapter(_models.RpcMethodAcknowledgeResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
-
-    def camera_changed(_self, info: _models.RpcMethodCameraChangedParameter0) -> None:
-        """Called by a Camera actor when it goes online or offline."""
-        _args = _arguments([_argument(info, _TypeAdapter(_models.RpcMethodCameraChangedParameter0))], [_UNSET])
-        _result = _self._transport.invoke('Site', _self._actor_id, 'camera_changed', _args)
-
-    def record(_self, event: _models.RpcMethodRecordParameter0) -> _models.RpcMethodRecordResult:
-        """Record one incident. Idempotent by event id: a retry of the same event changes nothing."""
-        _args = _arguments([_argument(event, _TypeAdapter(_models.RpcMethodRecordParameter0))], [_UNSET])
-        _result = _self._transport.invoke('Site', _self._actor_id, 'record', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodRecordResult] = _TypeAdapter(_models.RpcMethodRecordResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
-
-    def snapshot(_self) -> _models.RpcMethodSnapshotResult:
-        """Invoke Site.snapshot synchronously.
+    def state(_self) -> _models.RpcMethodStateResult:
+        """Invoke Site.state synchronously.
         
         Arguments and results are validated against the actor contract.
         Remote failures raise ActorInvocationError.
         """
         _args = _arguments([], [])
-        _result = _self._transport.invoke('Site', _self._actor_id, 'snapshot', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodSnapshotResult] = _TypeAdapter(_models.RpcMethodSnapshotResult)
+        _result = _self._transport.invoke('Site', _self._actor_id, 'state', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodStateResult] = _TypeAdapter(_models.RpcMethodStateResult)
         return _adapter.validate_json(_json.dumps(_result), strict=True)
 
-    def summary(_self, hours: _models.RpcMethodSummaryParameter0 | _Unset = _UNSET) -> _models.RpcMethodSummaryResult:
-        """Windowed stats over the stored incidents (the newest INCIDENTS_MAX)."""
-        _args = _arguments([_argument(hours, _TypeAdapter(_models.RpcMethodSummaryParameter0))], [_json.loads("24.0")])
-        _result = _self._transport.invoke('Site', _self._actor_id, 'summary', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodSummaryResult] = _TypeAdapter(_models.RpcMethodSummaryResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
+    def update_camera(_self, state: _models.RpcMethodUpdateCameraParameter0) -> None:
+        """Invoke Site.update_camera synchronously.
+        
+        Arguments and results are validated against the actor contract.
+        Remote failures raise ActorInvocationError.
+        """
+        _args = _arguments([_argument(state, _TypeAdapter(_models.RpcMethodUpdateCameraParameter0))], [_UNSET])
+        _result = _self._transport.invoke('Site', _self._actor_id, 'update_camera', _args)
 
     def broadcast(self, message: _models.SocketOutgoing) -> None:
         """Broadcast a typed application message to every connection without persisting it."""
@@ -90,54 +67,31 @@ class Stub:
         return _Connection[_models.SocketIncoming, _models.SocketOutgoing, _models.SocketEmittedState, _models.SocketStatePatch].open(grant, _TypeAdapter(_models.SocketIncoming), _TypeAdapter(_models.SocketOutgoing), _TypeAdapter(_models.SocketEmittedState), _TypeAdapter(_models.SocketStatePatch))
 
 class AsyncStub:
-    """One warehouse. Single writer for its incidents, counters, score and open alerts.
-    
-    Serialized execution: record, acknowledge and camera_changed never overlap for the same
-    Site id. Many Camera actors call Site.record concurrently; the runtime queues those calls
-    and applies them one at a time, so no update is ever lost and every broadcast snapshot is
-    a consistent state (counters, incidents and open alerts always agree).
-    """
+    """Roll-up of every camera at one site. Cameras push their full state on every change."""
     def __init__(self, actor_id: str, transport: _AsyncActorTransport | None = None) -> None:
         """Address an actor. An injected transport remains caller-owned."""
         self._actor_id = actor_id
         self._transport = transport if transport is not None else _default_async_client()
 
-    async def acknowledge(_self, event_id: _models.RpcMethodAcknowledgeParameter0, by: _models.RpcMethodAcknowledgeParameter1) -> _models.RpcMethodAcknowledgeResult:
-        """Close an open alert. None if the id is unknown or was already acknowledged."""
-        _args = _arguments([_argument(event_id, _TypeAdapter(_models.RpcMethodAcknowledgeParameter0)), _argument(by, _TypeAdapter(_models.RpcMethodAcknowledgeParameter1))], [_UNSET, _UNSET])
-        _result = await _self._transport.invoke('Site', _self._actor_id, 'acknowledge', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodAcknowledgeResult] = _TypeAdapter(_models.RpcMethodAcknowledgeResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
-
-    async def camera_changed(_self, info: _models.RpcMethodCameraChangedParameter0) -> None:
-        """Called by a Camera actor when it goes online or offline."""
-        _args = _arguments([_argument(info, _TypeAdapter(_models.RpcMethodCameraChangedParameter0))], [_UNSET])
-        _result = await _self._transport.invoke('Site', _self._actor_id, 'camera_changed', _args)
-
-    async def record(_self, event: _models.RpcMethodRecordParameter0) -> _models.RpcMethodRecordResult:
-        """Record one incident. Idempotent by event id: a retry of the same event changes nothing."""
-        _args = _arguments([_argument(event, _TypeAdapter(_models.RpcMethodRecordParameter0))], [_UNSET])
-        _result = await _self._transport.invoke('Site', _self._actor_id, 'record', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodRecordResult] = _TypeAdapter(_models.RpcMethodRecordResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
-
-    async def snapshot(_self) -> _models.RpcMethodSnapshotResult:
-        """Invoke Site.snapshot asynchronously.
+    async def state(_self) -> _models.RpcMethodStateResult:
+        """Invoke Site.state asynchronously.
         
         Arguments and results are validated against the actor contract.
         Remote failures raise ActorInvocationError.
         """
         _args = _arguments([], [])
-        _result = await _self._transport.invoke('Site', _self._actor_id, 'snapshot', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodSnapshotResult] = _TypeAdapter(_models.RpcMethodSnapshotResult)
+        _result = await _self._transport.invoke('Site', _self._actor_id, 'state', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodStateResult] = _TypeAdapter(_models.RpcMethodStateResult)
         return _adapter.validate_json(_json.dumps(_result), strict=True)
 
-    async def summary(_self, hours: _models.RpcMethodSummaryParameter0 | _Unset = _UNSET) -> _models.RpcMethodSummaryResult:
-        """Windowed stats over the stored incidents (the newest INCIDENTS_MAX)."""
-        _args = _arguments([_argument(hours, _TypeAdapter(_models.RpcMethodSummaryParameter0))], [_json.loads("24.0")])
-        _result = await _self._transport.invoke('Site', _self._actor_id, 'summary', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodSummaryResult] = _TypeAdapter(_models.RpcMethodSummaryResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
+    async def update_camera(_self, state: _models.RpcMethodUpdateCameraParameter0) -> None:
+        """Invoke Site.update_camera asynchronously.
+        
+        Arguments and results are validated against the actor contract.
+        Remote failures raise ActorInvocationError.
+        """
+        _args = _arguments([_argument(state, _TypeAdapter(_models.RpcMethodUpdateCameraParameter0))], [_UNSET])
+        _result = await _self._transport.invoke('Site', _self._actor_id, 'update_camera', _args)
 
     async def broadcast(self, message: _models.SocketOutgoing) -> None:
         """Broadcast a typed application message to every connection without persisting it."""

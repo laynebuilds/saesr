@@ -11,45 +11,48 @@ from durable_actors.generated import UNSET as _UNSET, Unset as _Unset, arguments
 from . import _camera_models as _models
 
 class Stub:
-    """One camera feed. Owns its liveness and forwards incidents to its Site.
+    """One camera. Owns its incidents, the relay outbox and the verification windows.
     
-    A durable alarm marks the camera offline when heartbeats stop, even if nothing else
-    ever calls it again (the runtime wakes the actor for on_alarm). Online/offline flips
-    are pushed to the Site so the dashboard snapshot shows camera health live.
+    Serialized execution means a detection, a relay update and an approval for this camera never
+    interleave. A single durable alarm is always set to the earliest pending deadline (offline
+    timeout, end of recovering, verification window), so time-driven transitions happen even if
+    nothing else ever calls the actor.
     """
     def __init__(self, actor_id: str, transport: _ActorTransport | None = None) -> None:
         """Address an actor. An injected transport remains caller-owned."""
         self._actor_id = actor_id
         self._transport = transport if transport is not None else _default_client()
 
-    def get_status(_self) -> _models.RpcMethodGetStatusResult:
-        """Invoke Camera.get_status synchronously.
+    def message(_self, msg: _models.RpcMethodMessageParameter0) -> _models.RpcMethodMessageResult:
+        """Apply one ActorMessage (schema.ActorMessage JSON). Idempotent for duplicates."""
+        _args = _arguments([_argument(msg, _TypeAdapter(_models.RpcMethodMessageParameter0))], [_UNSET])
+        _result = _self._transport.invoke('Camera', _self._actor_id, 'message', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodMessageResult] = _TypeAdapter(_models.RpcMethodMessageResult)
+        return _adapter.validate_json(_json.dumps(_result), strict=True)
+
+    def pending_relay(_self) -> _models.RpcMethodPendingRelayResult:
+        """Relay calls not yet accepted by the relay, oldest first."""
+        _args = _arguments([], [])
+        _result = _self._transport.invoke('Camera', _self._actor_id, 'pending_relay', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodPendingRelayResult] = _TypeAdapter(_models.RpcMethodPendingRelayResult)
+        return _adapter.validate_json(_json.dumps(_result), strict=True)
+
+    def relay_delivered(_self, outbox_id: _models.RpcMethodRelayDeliveredParameter0) -> _models.RpcMethodRelayDeliveredResult:
+        """The relay answered 2xx for this outbox item. Returns False if it was not pending."""
+        _args = _arguments([_argument(outbox_id, _TypeAdapter(_models.RpcMethodRelayDeliveredParameter0))], [_UNSET])
+        _result = _self._transport.invoke('Camera', _self._actor_id, 'relay_delivered', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodRelayDeliveredResult] = _TypeAdapter(_models.RpcMethodRelayDeliveredResult)
+        return _adapter.validate_json(_json.dumps(_result), strict=True)
+
+    def state(_self) -> _models.RpcMethodStateResult:
+        """Invoke Camera.state synchronously.
         
         Arguments and results are validated against the actor contract.
         Remote failures raise ActorInvocationError.
         """
         _args = _arguments([], [])
-        _result = _self._transport.invoke('Camera', _self._actor_id, 'get_status', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodGetStatusResult] = _TypeAdapter(_models.RpcMethodGetStatusResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
-
-    def heartbeat(_self, fps: _models.RpcMethodHeartbeatParameter0 | _Unset = _UNSET, site: _models.RpcMethodHeartbeatParameter1 | _Unset = _UNSET) -> _models.RpcMethodHeartbeatResult:
-        """The camera is alive and producing frames at `fps`."""
-        _args = _arguments([_argument(fps, _TypeAdapter(_models.RpcMethodHeartbeatParameter0)), _argument(site, _TypeAdapter(_models.RpcMethodHeartbeatParameter1))], [_json.loads("null"), _json.loads("\"demo-warehouse\"")])
-        _result = _self._transport.invoke('Camera', _self._actor_id, 'heartbeat', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodHeartbeatResult] = _TypeAdapter(_models.RpcMethodHeartbeatResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
-
-    def record(_self, event: _models.RpcMethodRecordParameter0, site: _models.RpcMethodRecordParameter1 | _Unset = _UNSET) -> _models.RpcMethodRecordResult:
-        """Record an incident seen by this camera and forward it to the Site.
-        
-        If the Site call fails, this call raises and its own changes roll back, so the caller
-        retries the whole thing; Site.record is idempotent by event id, so a retry after a
-        partial success is harmless (at-least-once delivery, exactly-once effect).
-        """
-        _args = _arguments([_argument(event, _TypeAdapter(_models.RpcMethodRecordParameter0)), _argument(site, _TypeAdapter(_models.RpcMethodRecordParameter1))], [_UNSET, _json.loads("\"demo-warehouse\"")])
-        _result = _self._transport.invoke('Camera', _self._actor_id, 'record', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodRecordResult] = _TypeAdapter(_models.RpcMethodRecordResult)
+        _result = _self._transport.invoke('Camera', _self._actor_id, 'state', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodStateResult] = _TypeAdapter(_models.RpcMethodStateResult)
         return _adapter.validate_json(_json.dumps(_result), strict=True)
 
     def broadcast(self, message: _models.SocketOutgoing) -> None:
@@ -82,45 +85,48 @@ class Stub:
         return _Connection[_models.SocketIncoming, _models.SocketOutgoing, _models.SocketEmittedState, _models.SocketStatePatch].open(grant, _TypeAdapter(_models.SocketIncoming), _TypeAdapter(_models.SocketOutgoing), _TypeAdapter(_models.SocketEmittedState), _TypeAdapter(_models.SocketStatePatch))
 
 class AsyncStub:
-    """One camera feed. Owns its liveness and forwards incidents to its Site.
+    """One camera. Owns its incidents, the relay outbox and the verification windows.
     
-    A durable alarm marks the camera offline when heartbeats stop, even if nothing else
-    ever calls it again (the runtime wakes the actor for on_alarm). Online/offline flips
-    are pushed to the Site so the dashboard snapshot shows camera health live.
+    Serialized execution means a detection, a relay update and an approval for this camera never
+    interleave. A single durable alarm is always set to the earliest pending deadline (offline
+    timeout, end of recovering, verification window), so time-driven transitions happen even if
+    nothing else ever calls the actor.
     """
     def __init__(self, actor_id: str, transport: _AsyncActorTransport | None = None) -> None:
         """Address an actor. An injected transport remains caller-owned."""
         self._actor_id = actor_id
         self._transport = transport if transport is not None else _default_async_client()
 
-    async def get_status(_self) -> _models.RpcMethodGetStatusResult:
-        """Invoke Camera.get_status asynchronously.
+    async def message(_self, msg: _models.RpcMethodMessageParameter0) -> _models.RpcMethodMessageResult:
+        """Apply one ActorMessage (schema.ActorMessage JSON). Idempotent for duplicates."""
+        _args = _arguments([_argument(msg, _TypeAdapter(_models.RpcMethodMessageParameter0))], [_UNSET])
+        _result = await _self._transport.invoke('Camera', _self._actor_id, 'message', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodMessageResult] = _TypeAdapter(_models.RpcMethodMessageResult)
+        return _adapter.validate_json(_json.dumps(_result), strict=True)
+
+    async def pending_relay(_self) -> _models.RpcMethodPendingRelayResult:
+        """Relay calls not yet accepted by the relay, oldest first."""
+        _args = _arguments([], [])
+        _result = await _self._transport.invoke('Camera', _self._actor_id, 'pending_relay', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodPendingRelayResult] = _TypeAdapter(_models.RpcMethodPendingRelayResult)
+        return _adapter.validate_json(_json.dumps(_result), strict=True)
+
+    async def relay_delivered(_self, outbox_id: _models.RpcMethodRelayDeliveredParameter0) -> _models.RpcMethodRelayDeliveredResult:
+        """The relay answered 2xx for this outbox item. Returns False if it was not pending."""
+        _args = _arguments([_argument(outbox_id, _TypeAdapter(_models.RpcMethodRelayDeliveredParameter0))], [_UNSET])
+        _result = await _self._transport.invoke('Camera', _self._actor_id, 'relay_delivered', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodRelayDeliveredResult] = _TypeAdapter(_models.RpcMethodRelayDeliveredResult)
+        return _adapter.validate_json(_json.dumps(_result), strict=True)
+
+    async def state(_self) -> _models.RpcMethodStateResult:
+        """Invoke Camera.state asynchronously.
         
         Arguments and results are validated against the actor contract.
         Remote failures raise ActorInvocationError.
         """
         _args = _arguments([], [])
-        _result = await _self._transport.invoke('Camera', _self._actor_id, 'get_status', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodGetStatusResult] = _TypeAdapter(_models.RpcMethodGetStatusResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
-
-    async def heartbeat(_self, fps: _models.RpcMethodHeartbeatParameter0 | _Unset = _UNSET, site: _models.RpcMethodHeartbeatParameter1 | _Unset = _UNSET) -> _models.RpcMethodHeartbeatResult:
-        """The camera is alive and producing frames at `fps`."""
-        _args = _arguments([_argument(fps, _TypeAdapter(_models.RpcMethodHeartbeatParameter0)), _argument(site, _TypeAdapter(_models.RpcMethodHeartbeatParameter1))], [_json.loads("null"), _json.loads("\"demo-warehouse\"")])
-        _result = await _self._transport.invoke('Camera', _self._actor_id, 'heartbeat', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodHeartbeatResult] = _TypeAdapter(_models.RpcMethodHeartbeatResult)
-        return _adapter.validate_json(_json.dumps(_result), strict=True)
-
-    async def record(_self, event: _models.RpcMethodRecordParameter0, site: _models.RpcMethodRecordParameter1 | _Unset = _UNSET) -> _models.RpcMethodRecordResult:
-        """Record an incident seen by this camera and forward it to the Site.
-        
-        If the Site call fails, this call raises and its own changes roll back, so the caller
-        retries the whole thing; Site.record is idempotent by event id, so a retry after a
-        partial success is harmless (at-least-once delivery, exactly-once effect).
-        """
-        _args = _arguments([_argument(event, _TypeAdapter(_models.RpcMethodRecordParameter0)), _argument(site, _TypeAdapter(_models.RpcMethodRecordParameter1))], [_UNSET, _json.loads("\"demo-warehouse\"")])
-        _result = await _self._transport.invoke('Camera', _self._actor_id, 'record', _args)
-        _adapter: _TypeAdapter[_models.RpcMethodRecordResult] = _TypeAdapter(_models.RpcMethodRecordResult)
+        _result = await _self._transport.invoke('Camera', _self._actor_id, 'state', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodStateResult] = _TypeAdapter(_models.RpcMethodStateResult)
         return _adapter.validate_json(_json.dumps(_result), strict=True)
 
     async def broadcast(self, message: _models.SocketOutgoing) -> None:

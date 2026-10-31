@@ -11,11 +11,12 @@ from . import _camera as _client_0
 from . import _camera_models as _models_0
 
 class Camera:
-    """One camera feed. Owns its liveness and forwards incidents to its Site.
+    """One camera. Owns its incidents, the relay outbox and the verification windows.
     
-    A durable alarm marks the camera offline when heartbeats stop, even if nothing else
-    ever calls it again (the runtime wakes the actor for on_alarm). Online/offline flips
-    are pushed to the Site so the dashboard snapshot shows camera health live.
+    Serialized execution means a detection, a relay update and an approval for this camera never
+    interleave. A single durable alarm is always set to the earliest pending deadline (offline
+    timeout, end of recovering, verification window), so time-driven transitions happen even if
+    nothing else ever calls the actor.
     """
     Stub: _TypeAlias = _client_0.Stub
     Metadata: _TypeAlias = _models_0.SocketMetadata
@@ -24,9 +25,21 @@ class Camera:
     State: _TypeAlias = _models_0.SocketState
     EmittedState: _TypeAlias = _models_0.SocketEmittedState
     StatePatch: _TypeAlias = _models_0.SocketStatePatch
-    RecordResult: _TypeAlias = _models_0.RecordResult
-    SaesrEvent: _TypeAlias = _models_0.SaesrEvent
-    CameraStatus: _TypeAlias = _models_0.CameraStatus
+    Point: _TypeAlias = _models_0.Point
+    TraceEntry: _TypeAlias = _models_0.TraceEntry
+    SocketCommand: _TypeAlias = _models_0.SocketCommand
+    Viewer: _TypeAlias = _models_0.Viewer
+    Action: _TypeAlias = _models_0.Action
+    Event: _TypeAlias = _models_0.Event
+    Incident: _TypeAlias = _models_0.Incident
+    SocketAction: _TypeAlias = _models_0.SocketAction
+    SocketEvent: _TypeAlias = _models_0.SocketEvent
+    SocketIncident: _TypeAlias = _models_0.SocketIncident
+    CameraState: _TypeAlias = _models_0.CameraState
+    RelayStart: _TypeAlias = _models_0.RelayStart
+    OutboxItem: _TypeAlias = _models_0.OutboxItem
+    CameraCore: _TypeAlias = _models_0.CameraCore
+    MessageResult: _TypeAlias = _models_0.MessageResult
 
     @_builtins.staticmethod
     def get(actor_id: _builtins.str, transport: _ActorTransport | None = None) -> _client_0.Stub:
@@ -52,37 +65,31 @@ class Camera:
 
     class Methods:
         """Argument tuples and return types for each actor RPC."""
-        class get_status:
-            """Types for Camera.get_status."""
+        class message:
+            """Apply one ActorMessage (schema.ActorMessage JSON). Idempotent for duplicates."""
+            Args: _TypeAlias = _builtins.tuple[_models_0.RpcMethodMessageParameter0]
+            Result: _TypeAlias = _models_0.RpcMethodMessageResult
+
+        class pending_relay:
+            """Relay calls not yet accepted by the relay, oldest first."""
             Args: _TypeAlias = _builtins.tuple[()]
-            Result: _TypeAlias = _models_0.RpcMethodGetStatusResult
+            Result: _TypeAlias = _models_0.RpcMethodPendingRelayResult
 
-        class heartbeat:
-            """The camera is alive and producing frames at `fps`."""
-            Args: _TypeAlias = _builtins.tuple[()] | _builtins.tuple[_models_0.RpcMethodHeartbeatParameter0 | _Unset] | _builtins.tuple[_models_0.RpcMethodHeartbeatParameter0 | _Unset, _models_0.RpcMethodHeartbeatParameter1 | _Unset]
-            Result: _TypeAlias = _models_0.RpcMethodHeartbeatResult
+        class relay_delivered:
+            """The relay answered 2xx for this outbox item. Returns False if it was not pending."""
+            Args: _TypeAlias = _builtins.tuple[_models_0.RpcMethodRelayDeliveredParameter0]
+            Result: _TypeAlias = _models_0.RpcMethodRelayDeliveredResult
 
-        class record:
-            """Record an incident seen by this camera and forward it to the Site.
-            
-            If the Site call fails, this call raises and its own changes roll back, so the caller
-            retries the whole thing; Site.record is idempotent by event id, so a retry after a
-            partial success is harmless (at-least-once delivery, exactly-once effect).
-            """
-            Args: _TypeAlias = _builtins.tuple[_models_0.RpcMethodRecordParameter0] | _builtins.tuple[_models_0.RpcMethodRecordParameter0, _models_0.RpcMethodRecordParameter1 | _Unset]
-            Result: _TypeAlias = _models_0.RpcMethodRecordResult
+        class state:
+            """Types for Camera.state."""
+            Args: _TypeAlias = _builtins.tuple[()]
+            Result: _TypeAlias = _models_0.RpcMethodStateResult
 
 from . import _site as _client_1
 from . import _site_models as _models_1
 
 class Site:
-    """One warehouse. Single writer for its incidents, counters, score and open alerts.
-    
-    Serialized execution: record, acknowledge and camera_changed never overlap for the same
-    Site id. Many Camera actors call Site.record concurrently; the runtime queues those calls
-    and applies them one at a time, so no update is ever lost and every broadcast snapshot is
-    a consistent state (counters, incidents and open alerts always agree).
-    """
+    """Roll-up of every camera at one site. Cameras push their full state on every change."""
     Stub: _TypeAlias = _client_1.Stub
     Metadata: _TypeAlias = _models_1.SocketMetadata
     Incoming: _TypeAlias = _models_1.SocketIncoming
@@ -90,15 +97,20 @@ class Site:
     State: _TypeAlias = _models_1.SocketState
     EmittedState: _TypeAlias = _models_1.SocketEmittedState
     StatePatch: _TypeAlias = _models_1.SocketStatePatch
-    CameraInfo: _TypeAlias = _models_1.CameraInfo
-    RecordResult: _TypeAlias = _models_1.RecordResult
-    SaesrEvent: _TypeAlias = _models_1.SaesrEvent
-    Summary: _TypeAlias = _models_1.Summary
-    SiteCommand: _TypeAlias = _models_1.SiteCommand
+    TraceEntry: _TypeAlias = _models_1.TraceEntry
+    SocketCommand: _TypeAlias = _models_1.SocketCommand
     Viewer: _TypeAlias = _models_1.Viewer
+    ActionInput: _TypeAlias = _models_1.ActionInput
+    ActionOutput: _TypeAlias = _models_1.ActionOutput
+    IncidentInput: _TypeAlias = _models_1.IncidentInput
+    IncidentOutput: _TypeAlias = _models_1.IncidentOutput
+    Action: _TypeAlias = _models_1.Action
     Incident: _TypeAlias = _models_1.Incident
-    SiteSnapshot: _TypeAlias = _models_1.SiteSnapshot
-    SiteMessage: _TypeAlias = _models_1.SiteMessage
+    CameraStateInput: _TypeAlias = _models_1.CameraStateInput
+    CameraStateOutput: _TypeAlias = _models_1.CameraStateOutput
+    SiteState: _TypeAlias = _models_1.SiteState
+    CameraState: _TypeAlias = _models_1.CameraState
+    SocketSiteState: _TypeAlias = _models_1.SocketSiteState
 
     @_builtins.staticmethod
     def get(actor_id: _builtins.str, transport: _ActorTransport | None = None) -> _client_1.Stub:
@@ -124,29 +136,14 @@ class Site:
 
     class Methods:
         """Argument tuples and return types for each actor RPC."""
-        class acknowledge:
-            """Close an open alert. None if the id is unknown or was already acknowledged."""
-            Args: _TypeAlias = _builtins.tuple[_models_1.RpcMethodAcknowledgeParameter0, _models_1.RpcMethodAcknowledgeParameter1]
-            Result: _TypeAlias = _models_1.RpcMethodAcknowledgeResult
-
-        class camera_changed:
-            """Called by a Camera actor when it goes online or offline."""
-            Args: _TypeAlias = _builtins.tuple[_models_1.RpcMethodCameraChangedParameter0]
-            Result: _TypeAlias = None
-
-        class record:
-            """Record one incident. Idempotent by event id: a retry of the same event changes nothing."""
-            Args: _TypeAlias = _builtins.tuple[_models_1.RpcMethodRecordParameter0]
-            Result: _TypeAlias = _models_1.RpcMethodRecordResult
-
-        class snapshot:
-            """Types for Site.snapshot."""
+        class state:
+            """Types for Site.state."""
             Args: _TypeAlias = _builtins.tuple[()]
-            Result: _TypeAlias = _models_1.RpcMethodSnapshotResult
+            Result: _TypeAlias = _models_1.RpcMethodStateResult
 
-        class summary:
-            """Windowed stats over the stored incidents (the newest INCIDENTS_MAX)."""
-            Args: _TypeAlias = _builtins.tuple[()] | _builtins.tuple[_models_1.RpcMethodSummaryParameter0 | _Unset]
-            Result: _TypeAlias = _models_1.RpcMethodSummaryResult
+        class update_camera:
+            """Types for Site.update_camera."""
+            Args: _TypeAlias = _builtins.tuple[_models_1.RpcMethodUpdateCameraParameter0]
+            Result: _TypeAlias = None
 
 __all__ = ['Camera', 'Site']
