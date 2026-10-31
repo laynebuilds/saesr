@@ -20,8 +20,8 @@ await run(publish, set_frame, source, camera_id="cam-01", loop=False)
 
 - `source`: `"0"` (webcam) or a video file path. `loop=True` is replay mode: the file loops forever like a live camera (the backup if the webcam or wifi fails). With `loop=False` a file is processed once (in real time) and `run` returns.
 - `set_frame(jpeg, camera_id)` is called on every processed frame (blurred, skeleton, boxes, zones, red banner when a violation fires).
-- `publish(event)` is awaited only after media is written and uploaded: violations carry `clip_url` (5 s before + 5 s after, H.264) and 3 `keyframes` (trigger - 2 s, trigger, trigger + 2 s); compliant observations carry 1 keyframe and no clip.
-- `metrics`: `torso_angle_deg`, `knee_angle_deg`, `wrist_drop` (lift), `duration_s`, `track_id`, `inference_ms`, `detect_ms` (condition first true to violation confirmed, ~ the 1 s hold) and `latency_ms` (condition first true to publish; includes the 5 s clip post-roll, so ~6.3 s for violations).
+- Violations are published 0.5 s after they are confirmed, with 3 `keyframes` (trigger - 2 s from the ring buffer, trigger, trigger + 0.5 s) already written and uploaded, and `clip_url` set to the clip's FINAL URL (`media.final_url`: public Supabase URL when configured, else `/clips/<id>.mp4`). The clip (5 s before + 5 s after, H.264) keeps recording and is written and uploaded in a background thread about 4.5 s later, so the URL can 404 briefly; a failed clip is logged. Compliant observations carry 1 keyframe and no clip, published once it is uploaded.
+- `metrics`: `torso_angle_deg`, `knee_angle_deg`, `wrist_drop` (lift), `duration_s`, `track_id`, `inference_ms`, `detect_ms` (condition first true to violation confirmed, ~ the 1 s hold) and `latency_ms` (condition first true to publish: 1.0 s hold + 0.5 s after-keyframe + write; measured 1493 ms on a zone_breach).
 - Blocking work runs in threads; per-frame errors are logged and skipped, a dead source is retried.
 
 ## CLI
@@ -46,7 +46,7 @@ Faces are blurred (pixelate + Gaussian) from the head keypoints (nose, eyes, ear
 
 ## Env overrides
 
-`POSE_MODEL`, `CV_DEVICE` (`mps`, `cpu`), `CV_DET_CONF`, `SAESR_CAMERA` (default `cam-01`), `ZONES_PATH`, `CLIPS_DIR`, `CV_PROCESS_FPS` (8), `CV_RING_S` (10), `LIFT_BACK_ANGLE_MIN` (45), `LIFT_KNEE_ANGLE_MIN` (150), `LIFT_LEG_ANGLE_MAX` (35), `LIFT_WRIST_THIGH_FRAC` (0.5), `LIFT_SUSTAIN_S` (1.0), `LIFT_GAP_TOLERANCE_S`, `LIFT_HYSTERESIS_DEG` (5), `KPT_MIN_CONF` (0.5), `ZONE_DWELL_S` (1.0), `CV_DEBOUNCE_S` (5), `COMPLIANT_INTERVAL_S` (5), `COMPLIANT_MIN_S` (1), `CLIP_PRE_S` (5), `CLIP_POST_S` (5), `KEYFRAME_OFFSET_S` (2), `FACE_PAD`, `FACE_FALLBACK_FRAC`. All live in `config.py`.
+`POSE_MODEL`, `CV_DEVICE` (`mps`, `cpu`), `CV_DET_CONF`, `SAESR_CAMERA` (default `cam-01`), `ZONES_PATH`, `CLIPS_DIR`, `CV_PROCESS_FPS` (8), `CV_RING_S` (10), `LIFT_BACK_ANGLE_MIN` (45), `LIFT_KNEE_ANGLE_MIN` (150), `LIFT_LEG_ANGLE_MAX` (35), `LIFT_WRIST_THIGH_FRAC` (0.5), `LIFT_SUSTAIN_S` (1.0), `LIFT_GAP_TOLERANCE_S`, `LIFT_HYSTERESIS_DEG` (5), `KPT_MIN_CONF` (0.5), `ZONE_DWELL_S` (1.0), `CV_DEBOUNCE_S` (5), `COMPLIANT_INTERVAL_S` (5), `COMPLIANT_MIN_S` (1), `CLIP_PRE_S` (5), `CLIP_POST_S` (5), `KEYFRAME_OFFSET_S` (2), `KEYFRAME_AFTER_S` (0.5), `FACE_PAD`, `FACE_FALLBACK_FRAC`. All live in `config.py`.
 
 ## Files
 

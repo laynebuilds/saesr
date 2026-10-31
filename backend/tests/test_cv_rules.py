@@ -419,8 +419,13 @@ def test_run_end_to_end(tmp_path, monkeypatch):
     events: list[Event] = []
     frames: list = []
 
+    published_at = {}
+
     async def publish(ev):
         events.append(ev)
+        published_at[ev.event_id] = len(frames)  # processed frames so far
+        if ev.clip_url:  # published before the clip exists: the URL is the final one
+            published_at[ev.event_id + "clip_existed"] = (tmp_path / f"{ev.event_id}.mp4").exists()
 
     def set_frame(jpeg, camera_id):
         frames.append((len(jpeg), camera_id))
@@ -443,6 +448,9 @@ def test_run_end_to_end(tmp_path, monkeypatch):
     assert abs(ev.metrics["torso_angle_deg"] - 62) < 1 and ev.metrics["duration_s"] >= 1.0
     assert ev.clip_url == f"/clips/{ev.event_id}.mp4" and (tmp_path / f"{ev.event_id}.mp4").stat().st_size > 0
     assert len(ev.keyframes) == 3 and all((tmp_path / u.split("/")[-1]).exists() for u in ev.keyframes)
+    # published ~0.5 s after the trigger (t = 7.0 s), long before the 5 s post-roll ends (t = 12 s)
+    assert published_at[ev.event_id] <= 9 * fps
+    assert published_at[ev.event_id + "clip_existed"] is False
     clip = cv2.VideoCapture(str(tmp_path / f"{ev.event_id}.mp4"))
     n = int(clip.get(cv2.CAP_PROP_FRAME_COUNT))
     assert 9 * fps <= n <= 11 * fps + 1  # 5 s before + 5 s after

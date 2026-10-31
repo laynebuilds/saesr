@@ -383,12 +383,20 @@ async def run(
                  ev.type, ev.event_id, ev.zone_id, ev.confidence, ev.metrics.get("latency_ms"),
                  ev.metrics.get("detect_ms"), ev.clip_url)
 
-    async def finish_clip(pending) -> None:
+    async def announce(pending) -> None:
         try:
-            ev = await asyncio.to_thread(pipe.recorder.write, pending, media.upload)
+            ev = await asyncio.to_thread(pipe.recorder.write_keyframes, pending, media.upload, media.final_url)
             await deliver(ev, pending.onset_wall, pending.trigger_wall)
         except Exception:
-            log.exception("failed to finish event %s", getattr(pending.event, "event_id", "?"))
+            log.exception("failed to publish event %s", getattr(pending.event, "event_id", "?"))
+
+    async def finish_clip(pending) -> None:
+        try:
+            url = await asyncio.to_thread(pipe.recorder.write_clip, pending, media.upload)
+            if url is not None:
+                log.info("clip ready for %s: %s", pending.event.event_id, url)
+        except Exception:
+            log.exception("failed to write clip for %s", getattr(pending.event, "event_id", "?"))
 
     async def finish_still(ev: Event, frame: np.ndarray, onset_wall: float) -> None:
         try:
@@ -438,7 +446,10 @@ async def run(
             except Exception:
                 log.exception("set_frame failed")
 
-            for pending in pipe.recorder.add_frame(BufferedFrame(t, now_iso(), pipe.camera_id, annotated)):
+            ready, done = pipe.recorder.add_frame(BufferedFrame(t, now_iso(), pipe.camera_id, annotated))
+            for pending in ready:
+                spawn(announce(pending))
+            for pending in done:
                 spawn(finish_clip(pending))
             for hit in fired:
                 onset_wall = now - max(0.0, t - hit.onset_t) if hit.onset_t is not None else now
@@ -462,6 +473,9 @@ async def run(
 
         # normal end: write clips still collecting post-trigger frames
         for pending in pipe.recorder.flush():
+            if not pending.announced:
+                pending.announced = True
+                spawn(announce(pending))
             spawn(finish_clip(pending))
         if writers:
             await asyncio.gather(*list(writers), return_exceptions=True)

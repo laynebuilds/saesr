@@ -51,7 +51,10 @@ COMPLIANT_MIN_S = _f("COMPLIANT_MIN_S", 1.0)  # person must be seen without a vi
 CLIPS_DIR = Path(os.environ.get("CLIPS_DIR", BACKEND_DIR / "clips"))
 CLIP_PRE_S = _f("CLIP_PRE_S", 5.0)  # seconds of history before the trigger
 CLIP_POST_S = _f("CLIP_POST_S", 5.0)  # seconds after the trigger; the event is published once media is up
-KEYFRAME_OFFSET_S = _f("KEYFRAME_OFFSET_S", 2.0)  # keyframes at trigger - this, trigger, trigger + this
+KEYFRAME_OFFSET_S = _f("KEYFRAME_OFFSET_S", 2.0)  # "before" keyframe at trigger - this (from the ring buffer)
+# The event is published this long after the trigger, with the "after" keyframe taken here; the full clip
+# (CLIP_PRE_S + CLIP_POST_S) keeps recording and uploads in the background under its final URL.
+KEYFRAME_AFTER_S = _f("KEYFRAME_AFTER_S", 0.5)
 CLIP_FOURCCS = ("avc1", "mp4v")  # avc1 (H.264) plays in browsers; mp4v always works but needs a transcode
 
 # ---- Privacy ----

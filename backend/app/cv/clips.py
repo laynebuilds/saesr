@@ -2,9 +2,10 @@
 
 Every processed frame (already face-blurred and annotated) goes into a RING_S second ring buffer
 tagged with camera_id and timestamp. When a violation fires, the recorder keeps the CLIP_PRE_S
-seconds before the trigger, collects CLIP_POST_S more, then (in a worker thread) writes an H.264
-mp4 plus 3 keyframes (before, at, after the trigger), uploads them via app.media.upload, and hands
-the event back with clip_url and keyframes set so it can be published.
+seconds before the trigger. KEYFRAME_AFTER_S later it writes and uploads 3 keyframes (before, at,
+after the trigger) and hands the event back with keyframes and the clip's final URL set, so it can
+be published fast. When CLIP_POST_S has passed, the H.264 mp4 is written and uploaded in the
+background under that same URL.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ import numpy as np
 from .config import CLIP_FOURCCS as FOURCCS
 from .config import CLIP_POST_S as POST_S
 from .config import CLIP_PRE_S as PRE_S
-from .config import CLIPS_DIR, KEYFRAME_OFFSET_S, RING_S
+from .config import CLIPS_DIR, KEYFRAME_AFTER_S, KEYFRAME_OFFSET_S, RING_S
 
 log = logging.getLogger("saesr.cv.clips")
 
@@ -59,6 +60,7 @@ class Pending:
     onset_wall: float  # time.monotonic() when the violation condition first became true
     trigger_wall: float  # time.monotonic() when the rule fired
     frames: list = field(default_factory=list)  # BufferedFrame
+    announced: bool = False  # event handed out for publishing (keyframes stage done)
 
 
 def nearest(frames: list[BufferedFrame], t: float) -> Optional[BufferedFrame]:
@@ -101,17 +103,20 @@ class ClipRecorder:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.codec: Optional[str] = None
 
-    def add_frame(self, item: BufferedFrame) -> list[Pending]:
-        """Append a processed frame. Returns pendings that now have their post-trigger seconds."""
+    def add_frame(self, item: BufferedFrame) -> tuple[list[Pending], list[Pending]]:
+        """Append a processed frame. Returns (ready to publish, clip complete)."""
         self.ring.append(item)
-        done = []
+        ready, done = [], []
         for p in self.pending:
             p.frames.append(item)
+            if not p.announced and item.t - p.trigger_t >= KEYFRAME_AFTER_S - 1e-6:
+                p.announced = True
+                ready.append(p)
             if item.t - p.trigger_t >= self.post_s:
                 done.append(p)
         if done:
             self.pending = [p for p in self.pending if p not in done]
-        return done
+        return ready, done
 
     def trigger(self, event, t: float, onset_wall: float, trigger_wall: float) -> None:
         """Start a clip for event. Call after add_frame for the trigger frame."""
@@ -124,26 +129,34 @@ class ClipRecorder:
         out, self.pending = self.pending, []
         return out
 
-    def write(self, p: Pending, upload: Callable[[Path, str], str]):
-        """Blocking (run it in a thread): write + upload mp4 and 3 keyframes, return the updated event."""
+    def clip_path(self, p: Pending) -> Path:
+        return self.dir / f"{p.event.event_id}.mp4"
+
+    def write_keyframes(self, p: Pending, upload: Callable[[Path, str], str],
+                        final_url: Callable[[Path, str], str]):
+        """Blocking (thread): write + upload 3 keyframes, return the event with keyframes and the clip's
+        final URL (the clip itself is written later by write_clip)."""
         ev = p.event
+        frames = list(p.frames)
         keyframes = []
-        for i, off in enumerate((-KEYFRAME_OFFSET_S, 0.0, KEYFRAME_OFFSET_S)):
-            f = nearest(p.frames, p.trigger_t + off)
+        for i, off in enumerate((-KEYFRAME_OFFSET_S, 0.0, KEYFRAME_AFTER_S)):
+            f = nearest(frames, p.trigger_t + off)
             if f is None:
                 continue
             path = self.dir / f"{ev.event_id}_k{i}.jpg"
             if write_jpg(path, f.frame):
                 keyframes.append(upload(path, "keyframes"))
-        clip_path = self.dir / f"{ev.event_id}.mp4"
-        code = write_mp4(clip_path, p.frames)
-        clip_url = None
-        if code is not None:
-            self.codec = code
-            clip_url = upload(clip_path, "clips")
-        else:
-            log.warning("clip for %s could not be written", ev.event_id)
-        return ev.model_copy(update={"clip_url": clip_url, "keyframes": keyframes})
+        return ev.model_copy(update={"clip_url": final_url(self.clip_path(p), "clips"), "keyframes": keyframes})
+
+    def write_clip(self, p: Pending, upload: Callable[[Path, str], str]) -> Optional[str]:
+        """Blocking (thread): write + upload the full clip. Returns its URL, or None (logged) on failure."""
+        path = self.clip_path(p)
+        code = write_mp4(path, list(p.frames))
+        if code is None:
+            log.warning("clip for %s could not be written", p.event.event_id)
+            return None
+        self.codec = code
+        return upload(path, "clips")
 
     def write_still(self, event, frame: np.ndarray, upload: Callable[[Path, str], str]):
         """One keyframe only (compliant observations): cheap evidence, no clip."""

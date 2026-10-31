@@ -35,6 +35,15 @@ def _content_type(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 
+def final_url(local_path, bucket: str, site_id: str = SITE_ID) -> str:
+    """The URL upload() returns on success, known before the file exists (for clips still recording)."""
+    url = (os.environ.get("SUPABASE_URL") or "").rstrip("/")
+    key = os.environ.get("SUPABASE_SECRET_KEY") or ""
+    if not url or not key or bucket not in BUCKETS:
+        return local_url(local_path)
+    return f"{url}/storage/v1/object/public/{bucket}/{site_id}/{Path(local_path).name}"
+
+
 def upload(local_path, bucket: str, site_id: str = SITE_ID, client: Optional[httpx.Client] = None) -> str:
     """Upload one file and return its URL. `client` is for tests (httpx.MockTransport)."""
     path = Path(local_path)
@@ -65,7 +74,7 @@ def upload(local_path, bucket: str, site_id: str = SITE_ID, client: Optional[htt
         if resp.status_code >= 300:
             log.warning("upload %s to %s failed: HTTP %s %s", path.name, bucket, resp.status_code, resp.text[:200])
             return fallback
-        return f"{url}/storage/v1/object/public/{obj}"
+        return final_url(path, bucket, site_id)
     except Exception as err:  # never raise into the pipeline
         log.warning("upload %s to %s failed: %s", path.name, bucket, err)
         return fallback

@@ -87,3 +87,13 @@ def test_missing_file_falls_back(configured, tmp_path):
 def test_unknown_bucket_falls_back(configured, clip):
     client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
     assert media.upload(clip, "secrets", client=client) == "/clips/abc123.mp4"
+
+
+def test_final_url_matches_upload(configured, clip):
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    assert media.final_url(clip, "clips") == media.upload(clip, "clips", client=client)
+
+
+def test_final_url_local_when_not_configured(monkeypatch, tmp_path):
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    assert media.final_url(tmp_path / "x.mp4", "clips") == "/clips/x.mp4"
