@@ -2,6 +2,25 @@
 
 Computer vision threat detection for warehouses. Cameras you already have, watched by models that flag unsafe lifts, people in machine zones and food-hygiene misses the moment they happen. Every risk is verified by AI agents, fixed end to end, and checked again to confirm the fix worked: detect, triage, coach, fix, verify, report.
 
+<p align="center"><img src="docs/demo.gif" width="260" alt="saesr flagging a stoop lift live: pose skeleton, back angle and violation banner, face blurred"></p>
+
+<p align="center"><em>A real stoop lift, flagged about 1.5 s after the posture starts. Faces are blurred before any frame is saved.</em></p>
+
+## Why it matters
+
+- **Lifting injuries are the most expensive workplace injury.** Overexertion from handling objects costs US employers about $14 billion a year in direct workers' compensation costs, the top cause in the Liberty Mutual Workplace Safety Index.
+- **One hygiene miss on a food line can become a recall.** The industry benchmark (GMA/FMI) puts the average food recall at about $10 million in direct costs, before lost sales and brand damage.
+- **The cameras are already on the wall.** saesr is software only: it runs on existing CCTV, verifies each risk before anyone is paged, acts on it, and checks that the fix held.
+
+## What it does today
+
+- **Unsafe lift:** stoop lifts (back bent past 45 degrees without squatting, hands low) fire in about 1.5 s; correct squat lifts do not. Tuned on real footage.
+- **Machine zone breach:** a person's feet inside a hazard zone for more than a second.
+- **Verified, closed loop:** every detection becomes an incident in a Durable Actor, goes through triage, coaching and fixes by Agent Relay agents, then a verification window decides resolved or recurring.
+- **Tiered autonomy:** coaching and corrective records run automatically; slowing a machine waits for a human approval.
+- **Crash-proof:** kill the backend mid-incident and it comes back in about 2 s with the same incidents, actions and version, and no action runs twice.
+- **Audit trail:** every event, incident, action, agent step, corrective record and batch hold is logged to Supabase, with keyframes and clips in Storage.
+
 ## How it fits together
 
 ```
