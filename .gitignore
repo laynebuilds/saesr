@@ -10,3 +10,4 @@ backend/clips/*
 *.pt
 .DS_Store
 backend/data/
+samples/real/
