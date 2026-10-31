@@ -57,7 +57,7 @@ def _import_actors():
 
 
 actors = _import_actors()
-from . import agents, bus, mock, supabase_sink  # noqa: E402
+from . import agents, bus, mock, relay_feed, supabase_sink  # noqa: E402
 from .agents import activity  # noqa: E402
 from .schema import CAMERAS, SITE_ID, VIOLATIONS, ActorMessage, Event, now_iso  # noqa: E402
 
@@ -133,10 +133,11 @@ async def lifespan(app: FastAPI):
     bridge = _start_actors()  # no-op unless the actors server is configured (see app/actors.py)
     sink = supabase_sink.start()  # no-op unless SUPABASE_URL and SUPABASE_SECRET_KEY are set
     agents_task = agents.start()  # old Agent Relay supervisor: off unless AGENTS_SUPERVISOR=1
+    feed = relay_feed.start()  # relay agents' steps -> /agents/activity for the dashboard
     try:
         yield
     finally:
-        for t in (task, bridge, sink, agents_task, *[r["task"] for r in _replays.values()]):
+        for t in (task, bridge, sink, agents_task, feed, *[r["task"] for r in _replays.values()]):
             if t:
                 t.cancel()
         _replays.clear()
