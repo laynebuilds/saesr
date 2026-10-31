@@ -24,12 +24,42 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from . import actors, agents, bus, mock, supabase_sink
-from .agents import activity
-from .schema import CAMERAS, SITE_ID, VIOLATIONS, ActorMessage, Event, now_iso
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("saesr.api")
+
+
+def _import_actors():
+    """app.actors, or a disabled stand-in if it fails to import, so a broken actors module
+    never keeps the API (events, frames, crash recovery) from starting."""
+    try:
+        from . import actors as mod
+        return mod
+    except Exception:
+        log.exception("app.actors failed to import; running with actors DISABLED")
+        import sys
+        import types
+
+        stub = types.ModuleType("app.actors")
+        stub.enabled = lambda: False
+        stub.start = lambda cameras: None
+        stub.stop = lambda: None
+        stub.status = lambda: {"enabled": False, "error": "app.actors failed to import"}
+        stub.open_state_subscription = lambda: asyncio.Queue()
+        stub.close_state_subscription = lambda q: None
+
+        async def _unavailable(*args, **kwargs):
+            return None
+
+        stub.send = stub.camera_state = stub.site_state = stub.socket_grant = _unavailable
+        sys.modules["app.actors"] = stub
+        setattr(sys.modules[__package__], "actors", stub)
+        return stub
+
+
+actors = _import_actors()
+from . import agents, bus, mock, supabase_sink  # noqa: E402
+from .agents import activity  # noqa: E402
+from .schema import CAMERAS, SITE_ID, VIOLATIONS, ActorMessage, Event, now_iso  # noqa: E402
 
 MODE = os.environ.get("MODE", "mock").lower()
 BACKEND_DIR = Path(__file__).resolve().parent.parent
