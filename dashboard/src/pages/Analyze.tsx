@@ -201,7 +201,7 @@ export function Analyze() {
                       key={i}
                       onClick={() => seek(i)}
                       className={cn('group relative overflow-hidden rounded-md border', v ? 'border-bad ring-1 ring-bad' : 'border-line hover:border-accent')}
-                      title={v ? `${TYPE_LABEL[v.type as EventType] ?? v.type} at ${f.t.toFixed(1)} s` : `${f.t.toFixed(1)} s`}
+                      title={v ? `${label(v.type)} at ${f.t.toFixed(1)} s` : `${f.t.toFixed(1)} s`}
                     >
                       <img src={f.url} alt="" className="aspect-video w-full object-cover" />
                       <span className="absolute bottom-0 left-0 bg-black/70 px-1 font-mono text-[9px] text-white">{f.t.toFixed(1)}s</span>
@@ -280,6 +280,9 @@ export function Analyze() {
     </div>
   )
 }
+
+const EXTRA_LABEL: Record<string, string> = { damaged_packaging: 'Damaged packaging', other: 'Other hazard' }
+const label = (t: string) => TYPE_LABEL[t as EventType] ?? EXTRA_LABEL[t] ?? 'Other hazard'
 
 const CAMERA_FOR: Record<string, string> = { unsafe_lift: 'cam-01', zone_breach: 'cam-01', missing_hairnet: 'cam-02', missing_gloves: 'cam-02' }
 
@@ -365,7 +368,7 @@ function ResultPanel({ r, frames, onSeek, file, note }: { r: Result; frames: Fra
       {a.violations.map((x, i) => (
         <Card key={i} className="p-4">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold">{TYPE_LABEL[x.type as EventType] ?? 'Other hazard'}</span>
+            <span className="font-semibold">{label(x.type)}</span>
             <SeverityBadge severity={x.severity} />
             <Pill className="text-muted">{x.standard_tag}</Pill>
           </div>

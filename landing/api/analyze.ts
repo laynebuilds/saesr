@@ -12,7 +12,7 @@ export const AnalysisSchema = z.object({
   headline: z.string().describe('One sentence a floor manager can act on.'),
   violations: z.array(
     z.object({
-      type: z.enum(['unsafe_lift', 'zone_breach', 'missing_hairnet', 'missing_gloves', 'other']),
+      type: z.enum(['unsafe_lift', 'zone_breach', 'missing_hairnet', 'missing_gloves', 'damaged_packaging', 'other']),
       description: z.string().describe('What is visible, in one or two sentences.'),
       severity: z.number().int().min(1).max(5),
       confidence: z.number().min(0).max(1),
@@ -33,6 +33,7 @@ You get frames sampled in time order, each labeled with its index and timestamp.
 - zone_breach: a person inside a marked machine or vehicle zone while equipment is running or moving.
 - missing_hairnet: hair uncovered where open food is handled.
 - missing_gloves: bare hands touching open food or food-contact surfaces.
+- damaged_packaging: a box or load being handled or stacked that is open, torn, crushed or split, has loose, torn or failing stretch wrap or strapping, or is unstable or leaning, so its contents could fall on a worker or be damaged. Say what is wrong with it.
 - other: a clear, serious hazard outside these types (for example a missing hard hat or hi-vis where clearly required).
 
 Rules:
@@ -56,7 +57,7 @@ const RequestSchema = z.object({
 // A violation found in uploaded footage becomes a real detection: its frames go to Storage and a row
 // goes to web_detections, which the floor backend picks up and runs through the full pipeline
 // (actors, relay agents over Agent Relay, manager call or text by severity).
-const PIPELINE_TYPES = new Set(['unsafe_lift', 'zone_breach', 'missing_hairnet', 'missing_gloves'])
+const PIPELINE_TYPES = new Set(['unsafe_lift', 'zone_breach', 'missing_hairnet', 'missing_gloves', 'damaged_packaging'])
 
 async function logDetection(input: z.infer<typeof RequestSchema>, analysis: z.infer<typeof AnalysisSchema>) {
   const env = (globalThis as any).process?.env ?? {}

@@ -51,6 +51,9 @@ async def run(url: str, key: str, client: Optional[httpx.AsyncClient] = None) ->
                                       json={"processed_at": datetime.now(timezone.utc).isoformat()})
                 if claim.status_code >= 300 or not claim.json():
                     continue  # someone else claimed it
+                if row.get("type") == "damaged_packaging":
+                    await _packaging_alert(row)
+                    continue
                 event = to_event(row)
                 if event:
                     await bus.publish(event)
@@ -60,6 +63,26 @@ async def run(url: str, key: str, client: Optional[httpx.AsyncClient] = None) ->
         except (httpx.HTTPError, ValueError, KeyError) as err:
             log.warning("web inbox poll failed: %s", err)
         await asyncio.sleep(POLL_S)
+
+
+async def _packaging_alert(row: dict) -> None:
+    """Damaged or open packaging is not an incident type of the CV pipeline, so the manager is phoned
+    directly with the same short briefing (falls back to a log line if calling is not configured)."""
+    from . import voice_call
+    from .photon_alert import _env
+
+    phone = _env("MANAGER_PHONE")
+    summary = (row.get("summary") or "a box or wrapping is damaged and could drop its load").rstrip(".")
+    text = (f"saesr safety alert. Worker number {_env('WORKER_NUMBER') or '1'}. Name: {_env('WORKER_NAME') or 'unknown'}. "
+            f"Issue detected: damaged packaging. {summary}. Action to be taken: stop handling it, re-wrap or replace the box "
+            "before it is moved. Goodbye.")
+    if not phone or (_env("CALL_MANAGER") or _env("PHOTON_CALL")) != "1":
+        log.info("packaging hazard (no call configured): %s", summary)
+        return
+    try:
+        log.info("packaging hazard, calling the manager: %s", await voice_call.call(phone, text))
+    except Exception as err:
+        log.warning("packaging call failed: %s", err)
 
 
 def start() -> Optional[asyncio.Task]:
