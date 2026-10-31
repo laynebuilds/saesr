@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import actors, bus, mock
+from . import actors, bus, mock, supabase_sink
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("saesr.api")
@@ -74,12 +74,15 @@ async def lifespan(app: FastAPI):
     # Durable actors bridge: a no-op unless ACTORS_URL is set (see app/actors.py).
     cameras = list(mock.CAMERAS) if MODE == "mock" else [os.environ.get("SAESR_CAMERA", "cam-1-loading-dock")]
     bridge = actors.start(cameras)
+    # Supabase sink: a no-op unless SUPABASE_URL and SUPABASE_SECRET_KEY are set (see app/supabase_sink.py).
+    sink = supabase_sink.start()
     try:
         yield
     finally:
         task.cancel()
-        if bridge:
-            bridge.cancel()
+        for extra in (bridge, sink):
+            if extra:
+                extra.cancel()
 
 
 app = FastAPI(title="Saesr API", lifespan=lifespan)
