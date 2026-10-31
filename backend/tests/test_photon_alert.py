@@ -30,6 +30,7 @@ def test_milestones_go_to_the_right_person_once():
     assert messages_for(inc("actioned"), sent) == []
     rec = messages_for(inc("recurring"), sent)
     assert [k.split(":")[1] for _, k, _ in rec] == ["recurring"]
+    assert rec[0][2].startswith("URGENT, saesr: Worker number 1. Name: ") and "Action: stop the task and retrain now." in rec[0][2]
     low = messages_for(inc("resolved", low_confidence=True), sent)
     assert "low confidence" in low[0][2]
 

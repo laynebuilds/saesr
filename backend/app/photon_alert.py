@@ -59,6 +59,13 @@ def _last_trace(inc: dict, agent: str) -> str:
     return ""
 
 
+def briefing(inc: dict) -> str:
+    """The few-words escalation used for both the urgent text and the phone call."""
+    issue = f"{TYPE_LABEL.get(inc.get('type'), inc.get('type')).lower()} again at the {ZONE_LABEL.get(inc.get('zone_id'), inc.get('zone_id'))} after coaching, injury risk"
+    return (f"Worker number {_env('WORKER_NUMBER') or '1'}. Name: {_env('WORKER_NAME') or 'unknown'}. "
+            f"Issue: {issue}. Action: stop the task and retrain now.")
+
+
 def messages_for(state: dict, sent: set) -> list[tuple[str, str, str]]:
     """New (role, key, text) alerts for one CameraState. role is "manager" or "worker"."""
     out = []
@@ -89,7 +96,7 @@ def messages_for(state: dict, sent: set) -> list[tuple[str, str, str]]:
         if status == "awaiting_approval":
             add("manager", "approval", f"saesr: {what} needs your approval to slow the machine. Approve it on the dashboard.")
         if status == "recurring":
-            add("manager", "recurring", f"saesr escalation: {what} happened again after the fix. The fix did not hold; a work order has been raised.")
+            add("manager", "recurring", "URGENT, saesr: " + briefing(inc))
         if status == "resolved":
             how = ("no repeat during the check window (low confidence)" if inc.get("low_confidence")
                    else "a correct lift was seen in the same zone, fix verified")
@@ -148,6 +155,7 @@ async def run(client: Optional[httpx.AsyncClient] = None) -> None:
     try:
         while True:
             state = await q.get()
+            _last_states[state.get("camera_id")] = state
             if state.get("camera_id") not in primed:
                 # first state after a (re)start: what already happened is history, only new milestones alert
                 primed.add(state.get("camera_id"))
@@ -157,6 +165,8 @@ async def run(client: Optional[httpx.AsyncClient] = None) -> None:
                 if not phones.get(role):
                     sent.add(key)
                     continue
+                if key.endswith(":recurring:manager") and _env("PHOTON_CALL") == "1":
+                    asyncio.create_task(_call_manager(phones[role], key))
                 try:
                     if await photon.send(phones[role], text, key):
                         sent.add(key)
@@ -165,6 +175,29 @@ async def run(client: Optional[httpx.AsyncClient] = None) -> None:
                     log.warning("photon: send %s failed (%s); will retry on the next update", key, err)
     finally:
         actors.close_state_subscription(q)
+
+
+_called: set = set()
+
+
+async def _call_manager(phone: str, key: str) -> None:
+    """Phone the manager once per escalation with the spoken briefing; the urgent text goes regardless."""
+    if key in _called:
+        return
+    _called.add(key)
+    from . import voice_call
+
+    inc_id = key.split(":")[0]
+    state = [s for s in _last_states.values() for i in s.get("incidents") or [] if i.get("incident_id") == inc_id]
+    inc = next(i for i in state[0]["incidents"] if i.get("incident_id") == inc_id) if state else {}
+    text = "saesr safety alert. " + briefing(inc) + " Goodbye."
+    try:
+        log.info("calling the manager: %s", await voice_call.call(phone, text))
+    except Exception as err:  # never let a phone problem touch detection
+        log.warning("call to the manager failed: %s", err)
+
+
+_last_states: dict = {}
 
 
 def start() -> Optional[asyncio.Task]:
