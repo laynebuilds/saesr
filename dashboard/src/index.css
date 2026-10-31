@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* saesr command center: dark instrument panel, graphite base, chroma reserved for urgency.
+   Same language as the ObeoFit command center. */
+@theme {
+  --font-sans: "Helvetica Neue", Helvetica, "Inter Tight", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-bg: var(--bg);
+  --color-fg: var(--text);
+  --color-card: var(--surface);
+  --color-subtle: var(--surface-2);
+  --color-raised: var(--surface-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-muted: var(--text-muted);
+  --color-dim: var(--text-dim);
+  --color-accent: var(--accent);
+  --color-accent-bg: var(--accent-bg);
+  --color-accent-fg: var(--bg);
+  --color-ok: var(--ready);
+  --color-ok-bg: var(--ready-bg);
+  --color-warn: var(--watch);
+  --color-warn-bg: var(--watch-bg);
+  --color-bad: var(--critical);
+  --color-bad-bg: var(--critical-bg);
+
+  --color-sev-1: var(--text-dim);
+  --color-sev-2: #8aa6c4;
+  --color-sev-3: var(--watch);
+  --color-sev-4: #ea7a3f;
+  --color-sev-5: var(--critical);
+}
+
+:root, .dark {
+  --bg: #07080b;
+  --surface: #0e1219;
+  --surface-2: #151b24;
+  --surface-3: #1c2530;
+  --border: #232a33;
+  --border-strong: #3a4250;
+  --text: #f3f5f8;
+  --text-muted: #8a93a0;
+  --text-dim: #5e6873;
+  --accent: #6e90b5;
+  --accent-bg: rgba(110, 144, 181, 0.12);
+  --ready: #3fb984;
+  --ready-bg: rgba(63, 185, 132, 0.12);
+  --watch: #e0a33b;
+  --watch-bg: rgba(224, 163, 59, 0.12);
+  --critical: #e5484d;
+  --critical-bg: rgba(229, 72, 77, 0.13);
+  --glass-bg: rgba(18, 24, 33, 0.62);
+  --glass-border: rgba(255, 255, 255, 0.07);
+  --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.4);
+  --scrim-from: rgba(7, 8, 11, 0.86);
+  --scrim-to: rgba(7, 8, 11, 0.97);
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  color-scheme: dark;
+}
+
+:root:not(.dark) {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --surface-3: #e4e9f0;
+  --border: #d8dee7;
+  --border-strong: #c2cbd8;
+  --text: #0e1219;
+  --text-muted: #5e6873;
+  --text-dim: #8a93a0;
+  --accent: #557699;
+  --accent-bg: rgba(85, 118, 153, 0.12);
+  --ready: #1f9d6b;
+  --ready-bg: rgba(31, 157, 107, 0.12);
+  --watch: #b87c1e;
+  --watch-bg: rgba(184, 124, 30, 0.12);
+  --critical: #cf3438;
+  --critical-bg: rgba(207, 52, 56, 0.1);
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(20, 27, 36, 0.09);
+  --glass-shadow: 0 10px 30px rgba(20, 27, 36, 0.08);
+  --scrim-from: rgba(243, 245, 248, 0.72);
+  --scrim-to: rgba(243, 245, 248, 0.94);
+  color-scheme: light;
+}
+
+* { border-color: var(--border); }
+html, body, #root { height: 100%; }
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(110, 144, 181, 0.06), transparent 60%),
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 100% 100%, 44px 44px, 44px 44px;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(180deg, var(--scrim-from), var(--scrim-to));
+  pointer-events: none;
+  z-index: 0;
+}
+#root { position: relative; z-index: 1; }
+
+@layer components {
+  .glass {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: blur(14px) saturate(140%);
+  }
+  .label {
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--text-dim);
+  }
+  .tnum { font-variant-numeric: tabular-nums; }
+}
+
+::selection { background: var(--accent); color: #07080b; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 999px; border: 2px solid var(--bg); }
+
+@keyframes pulse-dot { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px) scale(.99) } to { opacity: 1; transform: none } }
+.slide-in, .rise { animation: rise .45s var(--ease) both; }
+.stagger > * { animation: rise .45s var(--ease) both; }
+.stagger > *:nth-child(2) { animation-delay: .04s } .stagger > *:nth-child(3) { animation-delay: .08s }
+.stagger > *:nth-child(4) { animation-delay: .12s } .stagger > *:nth-child(5) { animation-delay: .16s }
+.stagger > *:nth-child(n+6) { animation-delay: .2s }
+@keyframes flash { 0% { box-shadow: inset 0 0 0 1px var(--critical) } 100% { box-shadow: inset 0 0 0 1px transparent } }
+.flash { animation: flash 1.6s ease-out 3; }
+
+/* CCTV frame: scanlines + vignette over the feed. */
+.cctv::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px),
+    radial-gradient(120% 90% at 50% 50%, transparent 55%, rgba(0,0,0,.55));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot, .slide-in, .rise, .stagger > *, .flash { animation: none !important; }
+}
