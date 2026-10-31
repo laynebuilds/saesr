@@ -68,12 +68,15 @@ def point_in_polygon(pt: Sequence[float], poly: Sequence[Sequence[float]]) -> bo
 class LiftPose:
     """Measured lift posture of one person in one frame."""
 
-    __slots__ = ("back_angle", "knee_angle", "leg_angle")
+    __slots__ = ("back_angle", "knee_angle", "leg_angle", "wrist_drop")
 
-    def __init__(self, back_angle: float, knee_angle: float, leg_angle: float):
+    def __init__(self, back_angle: float, knee_angle: float, leg_angle: float, wrist_drop: Optional[float] = None):
         self.back_angle = back_angle  # trunk angle from vertical
         self.knee_angle = knee_angle  # hip-knee-ankle interior angle (worst visible leg)
         self.leg_angle = leg_angle  # hip->ankle angle from vertical (rejects lying down)
+        # How far down the thigh the lowest visible wrist hangs: 0 = hip height, 0.5 = mid thigh,
+        # 1 = knee height (negative = above the hip). None when no wrist is visible.
+        self.wrist_drop = wrist_drop
 
 
 def measure_lift_pose(kpts: np.ndarray, conf: Optional[np.ndarray], min_conf: float) -> Optional[LiftPose]:
@@ -100,5 +103,15 @@ def measure_lift_pose(kpts: np.ndarray, conf: Optional[np.ndarray], min_conf: fl
             leg_angles.append(angle_from_vertical(kpts[hip], kpts[ankle]))
     if not knee_angles:
         return None
+
+    wrist_drop = None
+    knees = [i for i in (L_KNEE, R_KNEE) if ok(i)]
+    wrists = [i for i in (L_WRIST, R_WRIST) if ok(i)]
+    if wrists and knees:
+        knee_y = float(np.mean([kpts[i][1] for i in knees]))
+        thigh = knee_y - float(hp[1])
+        if thigh > 1e-6:
+            wrist_y = max(float(kpts[i][1]) for i in wrists)  # image y grows down: max = lowest wrist
+            wrist_drop = (wrist_y - float(hp[1])) / thigh
     # Worst (most bent) leg: if either knee is bent it is not a straight-leg stoop.
-    return LiftPose(back, min(knee_angles), max(leg_angles))
+    return LiftPose(back, min(knee_angles), max(leg_angles), wrist_drop)

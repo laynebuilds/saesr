@@ -1,29 +1,30 @@
-"""Saesr CV pipeline: camera or video -> pose + tracking + rules -> annotated stream + incident events.
+"""Saesr CV pipeline: camera or video -> pose + tracking + rules -> blurred annotated stream + v2 events.
 
 Server entry point:
     from app.cv.pipeline import run
-    await run(publish, set_frame, source)
+    await run(publish, set_frame, source, camera_id="cam-01", loop=False)
 
 CLI (no server), events printed to stdout as JSON lines, logs to stderr:
-    python -m app.cv.pipeline --source path/to/video.mp4 --show
+    python -m app.cv.pipeline --source path/to/video.mp4 --camera cam-01 --show
     python -m app.cv.pipeline --source 0
+    python -m app.cv.pipeline --source demo.mp4 --loop      # replay mode: loop the file like a live camera
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import itertools
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Awaitable, Callable, Optional
 
 import cv2
 import numpy as np
 
-from ..schema import SaesrEvent
-from .clips import ClipRecorder
+from .. import media
+from ..schema import SITE_ID, Event, Point, now_iso
+from .clips import BufferedFrame, ClipRecorder
 from .config import (
     BANNER_S,
     DEBOUNCE_S,
@@ -35,11 +36,13 @@ from .config import (
     MAX_READ_FAILURES,
     MAX_WIDTH,
     POSE_MODEL,
+    PROCESS_FPS,
     SOURCE_RETRY_S,
     TRACKER,
 )
 from .geometry import SKELETON
-from .rules import Hit, LiftRule, Person, ZoneRule, load_camera_config
+from .privacy import blur_faces
+from .rules import ComplianceRule, Hit, LiftRule, Person, ZoneRule, load_camera_config
 
 log = logging.getLogger("saesr.cv")
 
@@ -49,13 +52,13 @@ GREEN = (90, 190, 90)
 WHITE = (255, 255, 255)
 DARK = (25, 25, 25)
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-LABELS = {"unsafe_lift": "UNSAFE LIFT", "restricted_zone": "RESTRICTED ZONE"}
+LABELS = {"unsafe_lift": "UNSAFE LIFT", "zone_breach": "ZONE BREACH"}
 
-_counter = itertools.count(1)
+Detector = Callable[[np.ndarray], list[Person]]
 
 
 class Debouncer:
-    """At most one event per (type, tracked person) every DEBOUNCE_S seconds."""
+    """At most one event per key every window_s seconds."""
 
     def __init__(self, window_s: float = DEBOUNCE_S):
         self.window_s = window_s
@@ -94,24 +97,44 @@ def people_from_result(res) -> list[Person]:
     return people
 
 
+def yolo_detector() -> Detector:
+    from ultralytics import YOLO
+
+    model = YOLO(POSE_MODEL)
+
+    def detect(frame: np.ndarray) -> list[Person]:
+        res = model.track(
+            frame, persist=True, verbose=False, device=DEVICE, conf=DET_CONF, classes=[0], tracker=TRACKER
+        )[0]
+        return people_from_result(res)
+
+    return detect
+
+
 class Pipeline:
     """All blocking work lives here; run() calls it through asyncio.to_thread."""
 
-    def __init__(self, source: str, camera: str = DEFAULT_CAMERA):
-        from ultralytics import YOLO
-
+    def __init__(self, source, camera_id: str = DEFAULT_CAMERA, loop: bool = False,
+                 detector: Optional[Detector] = None, process_fps: float = PROCESS_FPS):
         self.source = str(source)
-        self.camera = camera
+        self.camera_id = camera_id
+        self.loop = loop
         self.is_file = not self.source.isdigit()
-        self.model = YOLO(POSE_MODEL)
-        self.cfg = load_camera_config(camera)
+        self.detect = detector or yolo_detector()
+        self.cfg = load_camera_config(camera_id)
         self.lift = LiftRule()
         self.zones = ZoneRule(self.cfg)
+        self.compliance = ComplianceRule(self.zones)
         self.recorder = ClipRecorder()
+        self.interval = 1.0 / max(0.5, process_fps)
         self.cap: Optional[cv2.VideoCapture] = None
         self.fps = 25.0
-        self.frame_no = 0
+        self.frames_read = 0  # every decoded frame (drives media time for files)
+        self.frames_done = 0  # frames that went through the model
+        self.last_t: Optional[float] = None
+        self.eof = False  # a non-looping file reached its end
         self.t0 = time.monotonic()
+        self.debounce = Debouncer()  # keyed by (type, track id), timed in media seconds
         self.banners: dict[str, float] = {}  # label -> monotonic time until which it shows
         self.read_failures = 0
         self.lock = threading.Lock()  # step() and close() never overlap (release during read can crash)
@@ -132,7 +155,8 @@ class Pipeline:
         self.fps = fps if 1 <= fps <= 120 else 25.0
         self.cap = cap
         self.read_failures = 0
-        log.info("opened source %s at %.1f fps", self.source, self.fps)
+        log.info("opened source %s at %.1f fps (camera %s, loop=%s)", self.source, self.fps, self.camera_id,
+                 self.loop)
 
     def close(self) -> None:
         with self.lock:
@@ -143,10 +167,13 @@ class Pipeline:
             self.cap.release()
             self.cap = None
 
-    def read(self) -> Optional[np.ndarray]:
-        """One frame, or None. Files loop at the end; a dead webcam is reopened."""
+    def _read(self) -> Optional[np.ndarray]:
+        """One decoded frame, or None. Looping files rewind; a dead webcam is reopened."""
         ok, frame = self.cap.read()
         if (not ok or frame is None) and self.is_file:
+            if not self.loop:
+                self.eof = True
+                return None
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             ok, frame = self.cap.read()
             if not ok:
@@ -159,47 +186,61 @@ class Pipeline:
                 self._open()
             return None
         self.read_failures = 0
-        h, w = frame.shape[:2]
-        if w > MAX_WIDTH:
-            frame = cv2.resize(frame, (MAX_WIDTH, int(h * MAX_WIDTH / w)))
+        self.frames_read += 1
         return frame
 
     def media_time(self) -> float:
         # Files use the frame count so rules time the same however fast inference runs.
-        return self.frame_no / self.fps if self.is_file else time.monotonic() - self.t0
+        return self.frames_read / self.fps if self.is_file else time.monotonic() - self.t0
+
+    def read_sampled(self) -> Optional[tuple[np.ndarray, float]]:
+        """Next frame due for processing at PROCESS_FPS; frames in between are read and dropped."""
+        while True:
+            frame = self._read()
+            if frame is None:
+                return None
+            t = self.media_time()
+            if self.last_t is None or t - self.last_t >= self.interval - 1e-6 or t < self.last_t:
+                self.last_t = t
+                h, w = frame.shape[:2]
+                if w > MAX_WIDTH:
+                    frame = cv2.resize(frame, (MAX_WIDTH, int(h * MAX_WIDTH / w)))
+                return frame, t
 
     # ---- one frame ----
     def step(self):
-        """Read, infer, apply rules, draw. Returns (annotated, hits, t) or None if no frame."""
+        """Read, infer, blur, apply rules, draw. Returns (annotated, fired, compliant, t) or None.
+
+        fired: debounced violation hits; compliant: compliant_observation hits."""
         with self.lock:
             if self.cap is None:
                 return None
-            frame = self.read()
-        if frame is None:
+            got = self.read_sampled()
+        if got is None:
             return None
-        self.frame_no += 1
-        t = self.media_time()
+        frame, t = got
+        self.frames_done += 1
         h, w = frame.shape[:2]
-        res = self.model.track(
-            frame, persist=True, verbose=False, device=DEVICE, conf=DET_CONF, classes=[0], tracker=TRACKER
-        )[0]
-        people = people_from_result(res)
+        people = self.detect(frame)
+        blur_faces(frame, people)  # privacy first: nothing below ever sees an unblurred face
 
         lift_hits, lift_bad = self.lift(people, t)
         zone_hits, zone_bad = self.zones(people, t, w, h)
+        bad = lift_bad | zone_bad
         hits: list[Hit] = lift_hits + zone_hits
         for hit in hits:
             if hit.zone is None:
                 hit.zone = self.zones.zone_of(hit.person, w, h)
-        until = time.monotonic() + BANNER_S
-        for hit in hits:
-            self.banners[LABELS.get(hit.type, hit.type.upper())] = until
-        annotated = self.draw(frame, people, lift_bad | zone_bad)
-        return annotated, hits, t
+        fired = [hit for hit in hits if self.debounce.allow((hit.type, hit.person.track_id), t)]
+        for hit in fired:  # banner goes on this very frame
+            self.banners[LABELS.get(hit.type, hit.type.upper())] = time.monotonic() + BANNER_S
+        compliant = self.compliance(people, bad, t, w, h)
+        annotated = self.draw(frame, people, bad)
+        return annotated, fired, compliant, t
 
     # ---- overlay ----
     def draw(self, frame: np.ndarray, people: list[Person], bad: set[int]) -> np.ndarray:
-        out = frame.copy()
+        out = frame  # already a private, blurred copy
         h, w = out.shape[:2]
         scale = max(0.45, min(0.8, w / 1600))
         if self.cfg.zones:
@@ -212,8 +253,7 @@ class Pipeline:
                 cv2.polylines(out, [z.pixels(w, h)], True, RED if z.restricted else GREEN, 2, cv2.LINE_AA)
 
         for p in people:
-            is_bad = p.track_id in bad
-            color = RED if is_bad else GREEN
+            color = RED if p.track_id in bad else GREEN
             x1, y1, x2, y2 = (int(v) for v in p.bbox)
             cv2.rectangle(out, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
             if p.kpts is not None:
@@ -240,30 +280,35 @@ class Pipeline:
             cv2.rectangle(out, (0, 0), (w, bh), RED, -1)
             cv2.putText(out, "VIOLATION  " + "  |  ".join(active), (14, int(bh * 0.68)), FONT, scale * 1.4,
                         WHITE, 2, cv2.LINE_AA)
-        _tag(out, f"{self.camera}  {datetime.now():%H:%M:%S}", (8, h - int(30 * scale / 0.5)), DARK, scale)
+        _tag(out, f"{self.camera_id}  {datetime.now():%H:%M:%S}", (8, h - int(30 * scale / 0.5)), DARK, scale)
         return out
 
-    def make_event(self, hit: Hit) -> SaesrEvent:
-        now = datetime.now(timezone.utc)
-        parts = self.camera.split("-")
-        tag = f"cam{parts[1]}" if len(parts) > 1 and parts[0] == "cam" else self.camera
+    def make_event(self, hit: Hit, w: int, h: int) -> Event:
         x1, y1, x2, y2 = hit.person.bbox
-        return SaesrEvent(
-            id=f"evt_{now:%Y%m%d_%H%M%S}_{tag}_{next(_counter):04d}",
-            camera=self.camera,
+        nx1, ny1 = _clamp(x1 / w), _clamp(y1 / h)
+        nx2, ny2 = _clamp(x2 / w), _clamp(y2 / h)
+        metrics = {k: v for k, v in hit.metrics.items() if v is not None}
+        metrics["track_id"] = hit.person.track_id
+        return Event(
+            site_id=SITE_ID,
+            camera_id=self.camera_id,
             type=hit.type,
-            severity=hit.severity,
-            timestamp=now.isoformat(),
-            zone=hit.zone or self.cfg.default_zone,
-            confidence=max(0.0, min(1.0, float(hit.confidence))),
-            bbox=(round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)),
-            detail=hit.detail,
+            confidence=_clamp(float(hit.confidence)),
+            timestamp=now_iso(),
+            zone_id=hit.zone or self.cfg.default_zone,
+            bbox=(round(nx1, 4), round(ny1, 4), round(nx2 - nx1, 4), round(ny2 - ny1, 4)),
+            centroid=Point(x=round((nx1 + nx2) / 2, 4), y=round((ny1 + ny2) / 2, 4)),
+            metrics=metrics,
         )
 
     @staticmethod
     def encode(frame: np.ndarray) -> bytes:
         ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         return buf.tobytes() if ok else b""
+
+
+def _clamp(v: float) -> float:
+    return max(0.0, min(1.0, float(v)))
 
 
 def _pt(xy) -> tuple[int, int]:
@@ -280,42 +325,69 @@ def _tag(img: np.ndarray, text: str, org: tuple[int, int], bg, scale: float) -> 
 
 
 async def run(
-    publish: Callable[[SaesrEvent], Awaitable[None]],
-    set_frame: Callable[[bytes], None],
-    source: str,
-    camera: str = DEFAULT_CAMERA,
+    publish: Callable[[Event], Awaitable[None]],
+    set_frame: Callable[[bytes, str], None],
+    source,
+    camera_id: str = DEFAULT_CAMERA,
+    loop: bool = False,
+    *,
     show: bool = False,
     max_frames: Optional[int] = None,
+    realtime: bool = True,
+    detector: Optional[Detector] = None,
 ) -> None:
-    """Run until cancelled (or max_frames). Never raises on bad frames or a flaky source."""
+    """Run until cancelled (or the file ends when loop=False, or max_frames processed frames).
+
+    loop=True is replay mode: a video file loops forever as if it were a live camera. Never raises on
+    bad frames or a flaky source. Events are published only after their media is written and uploaded.
+    """
     while True:
         try:
-            pipe = await asyncio.to_thread(Pipeline, str(source), camera)
+            pipe = await asyncio.to_thread(Pipeline, source, camera_id, loop, detector)
             break
         except Exception:
             log.exception("could not load pose model %s, retrying", POSE_MODEL)
             await asyncio.sleep(SOURCE_RETRY_S * 5)
 
-    debounce = Debouncer()
     writers: set[asyncio.Task] = set()
     consecutive_errors = 0
+    pace: Optional[tuple[float, float]] = None  # (wall, media t) anchor for real-time file playback
 
-    async def finish(pending) -> None:
+    async def deliver(ev: Event, onset_wall: Optional[float], trigger_wall: Optional[float]) -> None:
+        now = time.monotonic()
+        if onset_wall is not None:
+            ev.metrics["latency_ms"] = int(round((now - onset_wall) * 1000))
+            if trigger_wall is not None:
+                ev.metrics["detect_ms"] = int(round((trigger_wall - onset_wall) * 1000))
+        await publish(ev)
+        log.info("published %s %s zone=%s conf=%.2f latency_ms=%s detect_ms=%s clip=%s",
+                 ev.type, ev.event_id, ev.zone_id, ev.confidence, ev.metrics.get("latency_ms"),
+                 ev.metrics.get("detect_ms"), ev.clip_url)
+
+    async def finish_clip(pending) -> None:
         try:
-            ev = await asyncio.to_thread(pipe.recorder.write, pending)
-            if ev.clip_url is None:
-                log.warning("clip for %s could not be written", ev.id)
-            await publish(ev)
+            ev = await asyncio.to_thread(pipe.recorder.write, pending, media.upload)
+            await deliver(ev, pending.onset_wall, pending.trigger_wall)
         except Exception:
-            log.exception("failed to finish event %s", getattr(pending.event, "id", "?"))
+            log.exception("failed to finish event %s", getattr(pending.event, "event_id", "?"))
 
-    def spawn(pending) -> None:
-        task = asyncio.create_task(finish(pending))
+    async def finish_still(ev: Event, frame: np.ndarray, onset_wall: float) -> None:
+        try:
+            ev = await asyncio.to_thread(pipe.recorder.write_still, ev, frame, media.upload)
+            await deliver(ev, onset_wall, None)
+        except Exception:
+            log.exception("failed to publish %s", ev.event_id)
+
+    def spawn(coro) -> None:
+        task = asyncio.create_task(coro)
         writers.add(task)
         task.add_done_callback(writers.discard)
 
     try:
-        while max_frames is None or pipe.frame_no < max_frames:
+        while max_frames is None or pipe.frames_done < max_frames:
+            if pipe.eof:
+                log.info("end of %s after %d processed frames", pipe.source, pipe.frames_done)
+                break
             if pipe.cap is None:
                 try:
                     await asyncio.to_thread(pipe.open)
@@ -324,48 +396,54 @@ async def run(
                     await asyncio.sleep(SOURCE_RETRY_S)
                     continue
 
-            started = time.monotonic()
             try:
                 out = await asyncio.to_thread(pipe.step)
                 consecutive_errors = 0
             except Exception:
                 consecutive_errors += 1
                 if consecutive_errors <= 3 or consecutive_errors % 100 == 0:
-                    log.exception("frame %d failed (%d in a row)", pipe.frame_no, consecutive_errors)
+                    log.exception("frame %d failed (%d in a row)", pipe.frames_done, consecutive_errors)
                 if consecutive_errors % 50 == 0:
                     await asyncio.to_thread(pipe.close)  # force a reopen on the next pass
                 await asyncio.sleep(0.05)
                 continue
             if out is None:
-                await asyncio.sleep(0.03)
+                await asyncio.sleep(0 if pipe.eof else 0.03)
                 continue
-            annotated, hits, t = out
+            annotated, fired, compliant, t = out
+            h, w = annotated.shape[:2]
+            now = time.monotonic()
 
             try:
-                set_frame(await asyncio.to_thread(pipe.encode, annotated))
+                set_frame(await asyncio.to_thread(pipe.encode, annotated), pipe.camera_id)
             except Exception:
                 log.exception("set_frame failed")
 
-            for pending in pipe.recorder.add_frame(annotated, t):
-                spawn(pending)
-            now = time.monotonic()
-            for hit in hits:
-                if debounce.allow((hit.type, hit.person.track_id), now):
-                    pipe.recorder.trigger(pipe.make_event(hit), annotated, t)
+            for pending in pipe.recorder.add_frame(BufferedFrame(t, now_iso(), pipe.camera_id, annotated)):
+                spawn(finish_clip(pending))
+            for hit in fired:
+                onset_wall = now - max(0.0, t - hit.onset_t) if hit.onset_t is not None else now
+                ev = pipe.make_event(hit, w, h)
+                log.info("%s fired (%s), recording clip for %s", hit.type, hit.detail, ev.event_id)
+                pipe.recorder.trigger(ev, t, onset_wall, now)
+            for hit in compliant:  # latency here = still write + upload time
+                spawn(finish_still(pipe.make_event(hit, w, h), annotated, now))
 
             if show:
                 cv2.imshow("saesr", annotated)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
-            if pipe.is_file:
-                # play files at real time so the live view and clips look natural
-                await asyncio.sleep(max(0.0, 1.0 / pipe.fps - (time.monotonic() - started)))
+            if pipe.is_file and realtime:
+                # play files at real time so the live view, clips and latency look like a camera
+                if pace is None or t < pace[1]:
+                    pace = (time.monotonic(), t)
+                await asyncio.sleep(max(0.0, pace[0] + (t - pace[1]) - time.monotonic()))
             else:
                 await asyncio.sleep(0)
 
-        # normal end (CLI max_frames or q): write clips still collecting post-trigger frames
+        # normal end: write clips still collecting post-trigger frames
         for pending in pipe.recorder.flush():
-            spawn(pending)
+            spawn(finish_clip(pending))
         if writers:
             await asyncio.gather(*list(writers), return_exceptions=True)
     finally:
@@ -379,23 +457,26 @@ async def run(
 def _main() -> None:
     ap = argparse.ArgumentParser(description="Run the Saesr CV pipeline without the server.")
     ap.add_argument("--source", default="0", help="webcam index (0) or video file path")
-    ap.add_argument("--camera", default=DEFAULT_CAMERA, help="camera id, selects zones from zones.json")
+    ap.add_argument("--camera", default=DEFAULT_CAMERA, help="camera id (cam-01, cam-02), selects zones")
+    ap.add_argument("--loop", action="store_true", help="replay mode: loop the file forever like a live camera")
     ap.add_argument("--show", action="store_true", help="open a preview window (q to quit)")
-    ap.add_argument("--max-frames", type=int, default=None, help="stop after N frames (files loop otherwise)")
+    ap.add_argument("--max-frames", type=int, default=None, help="stop after N processed frames")
     ap.add_argument("--save-frame", default=None, help="write the last annotated frame to this jpg path")
+    ap.add_argument("--fast", action="store_true", help="process files as fast as possible (not real time)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     last: dict[str, bytes] = {}
 
-    async def pub(ev: SaesrEvent) -> None:
+    async def pub(ev: Event) -> None:
         print(ev.model_dump_json(), flush=True)
 
-    def frame(jpeg: bytes) -> None:
+    def frame(jpeg: bytes, camera_id: str) -> None:
         last["jpeg"] = jpeg
 
     try:
-        asyncio.run(run(pub, frame, args.source, args.camera, args.show, args.max_frames))
+        asyncio.run(run(pub, frame, args.source, args.camera, args.loop, show=args.show,
+                        max_frames=args.max_frames, realtime=not args.fast))
     except KeyboardInterrupt:
         pass
     if args.save_frame and "jpeg" in last:

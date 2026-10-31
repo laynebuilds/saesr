@@ -14,6 +14,8 @@ import numpy as np
 from .geometry import LiftPose, measure_lift_pose, point_in_polygon
 
 from .config import (
+    COMPLIANT_INTERVAL_S,
+    COMPLIANT_MIN_S,
     KPT_MIN_CONF,
     LIFT_BACK_ANGLE_MIN,
     LIFT_GAP_TOLERANCE_S,
@@ -21,9 +23,12 @@ from .config import (
     LIFT_KNEE_ANGLE_MIN,
     LIFT_LEG_ANGLE_MAX,
     LIFT_SUSTAIN_S,
-    ZONE_SUSTAIN_S,
+    LIFT_WRIST_THIGH_FRAC,
+    ZONE_DWELL_S,
+    ZONE_GAP_TOLERANCE_S,
     ZONES_PATH,
 )
+from .geometry import L_ANKLE, R_ANKLE
 
 
 @dataclass
@@ -36,6 +41,18 @@ class Person:
 
     @property
     def foot(self) -> tuple[float, float]:
+        """Ankle midpoint when the ankles are visible, else the bottom centre of the box."""
+        if self.kpts is not None:
+            vis = [
+                i for i in (L_ANKLE, R_ANKLE)
+                if (self.kpt_conf is None or self.kpt_conf[i] >= KPT_MIN_CONF)
+                and not (self.kpts[i][0] == 0 and self.kpts[i][1] == 0)
+            ]
+            if vis:
+                return (
+                    float(np.mean([self.kpts[i][0] for i in vis])),
+                    float(np.mean([self.kpts[i][1] for i in vis])),
+                )
         x1, _, x2, y2 = self.bbox
         return ((x1 + x2) / 2.0, y2)
 
@@ -43,11 +60,12 @@ class Person:
 @dataclass
 class Hit:
     type: str
-    severity: str
     person: Person
     confidence: float
     detail: str
     zone: Optional[str] = None
+    onset_t: Optional[float] = None  # media time the condition first became true
+    metrics: dict = field(default_factory=dict)
 
 
 class Sustain:
@@ -68,6 +86,9 @@ class Sustain:
     def active(self, key) -> bool:
         return key in self._start
 
+    def start(self, key) -> Optional[float]:
+        return self._start.get(key)
+
     def update(self, key, state: Optional[bool], t: float) -> bool:
         if state is True:
             if key not in self._start or t - self._last[key] > self.gap_s:
@@ -87,14 +108,17 @@ class Sustain:
 
 
 def is_unsafe_lift(p: LiftPose, already_active: bool = False) -> bool:
-    """Stooped back + straight legs + standing (not lying). Hysteresis: once a person is in the
-    violation window the thresholds relax by LIFT_HYSTERESIS_DEG so jitter at the boundary
-    does not reset the timer."""
+    """Stooped back + straight legs + wrists down low + standing (not lying). Hysteresis: once a
+    person is in the violation window the thresholds relax a little so jitter at the boundary does
+    not reset the timer. Hidden wrists are not evidence, so they never make a lift unsafe."""
     slack = LIFT_HYSTERESIS_DEG if already_active else 0.0
+    wrist_slack = 0.15 if already_active else 0.0
     return (
         p.back_angle > LIFT_BACK_ANGLE_MIN - slack
         and p.knee_angle > LIFT_KNEE_ANGLE_MIN - slack
         and p.leg_angle < LIFT_LEG_ANGLE_MAX
+        and p.wrist_drop is not None
+        and p.wrist_drop >= LIFT_WRIST_THIGH_FRAC - wrist_slack
     )
 
 
@@ -120,16 +144,23 @@ class LiftRule:
             if active:
                 bad.add(person.track_id)
             if self.sustain.update(person.track_id, active, t):
+                onset = self.sustain.start(person.track_id)
                 # confidence: how far past the threshold, blended with detector confidence
                 margin = min(1.0, (pose.back_angle - LIFT_BACK_ANGLE_MIN) / 30.0 + 0.5)
                 hits.append(
                     Hit(
                         type="unsafe_lift",
-                        severity="high",
                         person=person,
-                        confidence=round(float(min(1.0, 0.5 * person.conf + 0.5 * margin)), 2),
+                        confidence=round(float(max(0.0, min(1.0, 0.5 * person.conf + 0.5 * margin))), 2),
                         detail=f"back bent {pose.back_angle:.0f} degrees with straight legs "
-                        f"(knee {pose.knee_angle:.0f} degrees)",
+                        f"(knee {pose.knee_angle:.0f} degrees), hands low",
+                        onset_t=onset,
+                        metrics={
+                            "torso_angle_deg": round(pose.back_angle, 1),
+                            "knee_angle_deg": round(pose.knee_angle, 1),
+                            "wrist_drop": round(float(pose.wrist_drop), 2),
+                            "duration_s": round(t - onset, 2) if onset is not None else None,
+                        },
                     )
                 )
         self.sustain.prune({p.track_id for p in people}, t)
@@ -169,9 +200,11 @@ def load_camera_config(camera: str, path: Path = ZONES_PATH) -> CameraConfig:
 
 
 class ZoneRule:
-    def __init__(self, cfg: CameraConfig):
+    """zone_breach: the person's foot point inside a restricted polygon for ZONE_DWELL_S."""
+
+    def __init__(self, cfg: CameraConfig, dwell_s: float = ZONE_DWELL_S):
         self.cfg = cfg
-        self.sustain = Sustain(ZONE_SUSTAIN_S, 0.25)
+        self.sustain = Sustain(dwell_s, ZONE_GAP_TOLERANCE_S)
 
     def zone_of(self, person: Person, w: int, h: int) -> str:
         for z in self.cfg.zones:
@@ -185,19 +218,70 @@ class ZoneRule:
             for z in self.cfg.zones:
                 if not z.restricted:
                     continue
+                key = (person.track_id, z.name)
                 inside = z.contains(person.foot, w, h)
                 if inside:
                     bad.add(person.track_id)
-                if self.sustain.update((person.track_id, z.name), inside, t):
+                if self.sustain.update(key, inside, t):
+                    onset = self.sustain.start(key)
                     hits.append(
                         Hit(
-                            type="restricted_zone",
-                            severity="high",
+                            type="zone_breach",
                             person=person,
                             confidence=round(float(person.conf), 2),
                             detail=f"person inside restricted area {z.name}",
                             zone=z.name,
+                            onset_t=onset,
+                            metrics={"duration_s": round(t - onset, 2) if onset is not None else None},
                         )
                     )
         self.sustain.prune({(p.track_id, z.name) for p in people for z in self.cfg.zones}, t)
         return hits, bad
+
+
+class ComplianceRule:
+    """compliant_observation: a tracked person seen in a zone with no violation for COMPLIANT_MIN_S.
+
+    At most one per zone every COMPLIANT_INTERVAL_S (the pipeline is one camera, so zone = camera+zone).
+    The verifier relies on these to close incidents, so the only gates are: tracked, clean for a moment.
+    """
+
+    def __init__(self, zone_rule: ZoneRule, interval_s: float = COMPLIANT_INTERVAL_S,
+                 min_s: float = COMPLIANT_MIN_S):
+        self.zone_rule = zone_rule
+        self.interval_s = interval_s
+        self.min_s = min_s
+        self.clean_since: dict[int, float] = {}
+        self.last_emit: dict[str, float] = {}
+
+    def __call__(self, people: list[Person], bad: set[int], t: float, w: int, h: int) -> list[Hit]:
+        hits = []
+        live = set()
+        for person in people:
+            if person.track_id < 0:
+                continue  # untracked detections are not yet a person we can vouch for
+            live.add(person.track_id)
+            if person.track_id in bad:
+                self.clean_since.pop(person.track_id, None)
+                continue
+            since = self.clean_since.setdefault(person.track_id, t)
+            if t - since < self.min_s:
+                continue
+            zone = self.zone_rule.zone_of(person, w, h)
+            if t - self.last_emit.get(zone, -1e18) < self.interval_s:
+                continue
+            self.last_emit[zone] = t
+            hits.append(
+                Hit(
+                    type="compliant_observation",
+                    person=person,
+                    confidence=round(float(person.conf), 2),
+                    detail=f"person in {zone} with no violation",
+                    zone=zone,
+                    onset_t=since,
+                    metrics={"duration_s": round(t - since, 2)},
+                )
+            )
+        for tid in [k for k in self.clean_since if k not in live]:
+            self.clean_since.pop(tid, None)
+        return hits
