@@ -86,3 +86,34 @@ def test_disabled_without_env(monkeypatch):
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
     assert supabase_sink.start() is None
+
+
+def test_mirrors_supervisor_actions_to_agent_actions():
+    from app.agents import activity
+
+    seen = []
+    done = asyncio.Event()
+
+    def handler(req: httpx.Request):
+        seen.append(req)
+        done.set()
+        return httpx.Response(201)
+
+    async def go():
+        activity.reset()
+        s = sink_with(handler)
+        task = asyncio.create_task(supabase_sink.mirror_agent_actions(s))
+        await asyncio.sleep(0)
+        activity.record_message("cam-1", "#safety-floor", "just a chat line")
+        activity.record_action("supervisor", "floor-manager", "ESCALATION HIGH zone_hotspot",
+                               {"type": "escalation", "rule": "zone_hotspot", "event_ids": ["evt_1", "evt_2"]})
+        await asyncio.wait_for(done.wait(), 2)
+        task.cancel()
+
+    asyncio.run(go())
+    assert len(seen) == 1  # plain messages are not stored, only decisions
+    req = seen[0]
+    assert req.url.path == "/rest/v1/agent_actions" and req.headers["apikey"] == "sb_secret_test"
+    row = json.loads(req.content)
+    assert row["agent"] == "supervisor" and row["kind"] == "escalation"
+    assert row["incident_ids"] == ["evt_1", "evt_2"] and row["payload"]["rule"] == "zone_hotspot"

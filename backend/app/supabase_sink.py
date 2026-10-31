@@ -133,9 +133,49 @@ class SupabaseSink:
             await self.client.aclose()
 
 
+async def mirror_agent_actions(sink: SupabaseSink) -> None:
+    """Store every supervisor decision (escalations, patterns, briefs, acks) in agent_actions,
+    next to the incidents it refers to. Best effort: a few retries, then move on."""
+    from .agents import activity
+
+    q = activity.open_subscription()
+    try:
+        while True:
+            item = await q.get()
+            if item.get("kind") != "action":
+                continue
+            action = item.get("action") or {}
+            row = {
+                "ts": item["ts"],
+                "agent": item["agent"],
+                "kind": str(action.get("type") or action.get("kind") or "action"),
+                "message": item["text"],
+                "incident_ids": [str(i) for i in action.get("event_ids") or []],
+                "payload": action,
+            }
+            for attempt in range(3):
+                try:
+                    r = await sink.client.post(
+                        f"{sink.url}/rest/v1/agent_actions",
+                        headers={**sink.headers, "content-type": "application/json", "Prefer": "return=minimal"},
+                        json=row,
+                    )
+                    sink._check(r)
+                    break
+                except (Rejected, httpx.HTTPError, OSError) as err:
+                    log.warning("agent action not stored (%s), attempt %d", err, attempt + 1)
+                    await asyncio.sleep(BACKOFF_S[attempt])
+    finally:
+        activity.close_subscription(q)
+
+
 def start() -> Optional[asyncio.Task]:
     if not enabled():
         return None
     sink = SupabaseSink(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SECRET_KEY"])
     log.info("supabase sink on (site=%s)", SITE)
-    return asyncio.create_task(sink.run())
+
+    async def both():
+        await asyncio.gather(sink.run(), mirror_agent_actions(sink))
+
+    return asyncio.create_task(both())
