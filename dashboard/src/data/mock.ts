@@ -10,16 +10,17 @@ import type { ActivityItem } from '../contracts/agents'
 import { SITE_ID } from '../contracts/event'
 import { addActivity, applySite, markDown, setState } from './store'
 import type { Source } from './source'
+import { asset } from './config'
 
 const HAIKU = 'claude-haiku-4-5'
 const SONNET = 'claude-sonnet-5-5'
 const VERIFY_WINDOW_MS = 20_000
 
 const CLIP: Record<string, string> = {
-  unsafe_lift: '/footage/unsafe_lift',
-  zone_breach: '/footage/restricted_zone',
-  missing_hairnet: '/footage/no_hairnet',
-  missing_gloves: '/footage/no_gloves',
+  unsafe_lift: asset('/footage/unsafe_lift'),
+  zone_breach: asset('/footage/restricted_zone'),
+  missing_hairnet: asset('/footage/no_hairnet'),
+  missing_gloves: asset('/footage/no_gloves'),
 }
 const DETAIL: Record<string, string> = {
   unsafe_lift: 'back bent with straight legs while lifting',

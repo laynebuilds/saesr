@@ -15,3 +15,7 @@ samples/real/
 # Stock clips stay local (Pexels license: no redistribution as standalone files). See dashboard/public/footage/CREDITS.md
 dashboard/public/footage/*.mp4
 dashboard/public/footage/*.jpg
+
+# Pexels stock clips for the landing demo: deployed from a local copy, never committed
+landing/demo/footage/*.mp4
+landing/demo/footage/*.jpg
