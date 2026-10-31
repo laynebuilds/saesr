@@ -1,6 +1,8 @@
 const env = import.meta.env
 
-export const MOCK = env.VITE_MOCK !== '0'
+/** VITE_MOCK=cloud: the public demo, read-only, rebuilt from the real incident log in Supabase. */
+export const CLOUD = env.VITE_MOCK === 'cloud'
+export const MOCK = !CLOUD && env.VITE_MOCK !== '0'
 export const BACKEND_URL = (env.VITE_BACKEND_URL || 'http://localhost:8000').replace(/\/$/, '')
 /** Optional tokens if the backend sets INTERNAL_TOKEN / ADMIN_TOKEN (local demo only). */
 export const INTERNAL_TOKEN = env.VITE_INTERNAL_TOKEN || ''

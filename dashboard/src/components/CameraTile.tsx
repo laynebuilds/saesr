@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { IncidentView } from '../contracts/incident'
-import { MOCK, asset, mediaUrl, videoUrl } from '../data/config'
+import { CLOUD, MOCK, asset, mediaUrl, videoUrl } from '../data/config'
 import { TYPE_LABEL, zoneLabel } from '../lib/format'
 import { cn } from '../lib/cn'
 import { Dot } from './ui'
@@ -37,7 +37,7 @@ export function CameraFeed({
   big?: boolean
 }) {
   const now = useTick()
-  const live = !MOCK
+  const live = !MOCK && !CLOUD // cloud: the recorded incident clip and keyframe, not a live stream
   // Mock: each camera loops its own scene. Live: the backend's annotated MJPEG.
   const clip = MOCK && CAM_SCENE[camera] ? CAM_SCENE[camera] + '.mp4' : mediaUrl(incident?.event.clip_url)
   const still = MOCK && CAM_SCENE[camera] ? CAM_SCENE[camera] + '.jpg' : mediaUrl(incident?.event.frame_url)

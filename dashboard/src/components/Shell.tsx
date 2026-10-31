@@ -4,7 +4,7 @@ import { Activity, BarChart3, ClipboardCheck, Bot, Cctv, ChevronLeft, ChevronRig
 import { useDash, clearRecovery } from '../data/store'
 import { siteVersion } from '../data/adapt'
 import { useTheme } from '../hooks/useTheme'
-import { DEMO, MOCK } from '../data/config'
+import { CLOUD, DEMO, MOCK } from '../data/config'
 import { source } from '../data'
 import { cn } from '../lib/cn'
 import { Button, Dot } from './ui'
@@ -65,6 +65,7 @@ function ConnPill() {
       {label}
       {version != null && <span className="text-dim">v{version}</span>}
       {MOCK && <span className="text-warn">MOCK</span>}
+      {CLOUD && <span className="text-ok">REAL DATA</span>}
     </span>
   )
 }
