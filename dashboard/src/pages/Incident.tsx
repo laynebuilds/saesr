@@ -124,13 +124,15 @@ export function Incident() {
 
           {inc.coach && (
             <Card>
-              <CardHeader title="Coaching" right={<Pill>{inc.coach.standard_tag}</Pill>} />
+              <CardHeader title="Coaching" right={inc.coach.standard_tag ? <Pill>{inc.coach.standard_tag}</Pill> : undefined} />
               <div className="space-y-2 p-4 text-sm">
                 <p>{inc.coach.summary}</p>
-                <p>
-                  <span className="font-medium">Fix: </span>
-                  {inc.coach.recommended_fix}
-                </p>
+                {inc.coach.recommended_fix && (
+                  <p>
+                    <span className="font-medium">Fix: </span>
+                    {inc.coach.recommended_fix}
+                  </p>
+                )}
               </div>
             </Card>
           )}
