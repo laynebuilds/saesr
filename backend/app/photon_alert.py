@@ -3,7 +3,7 @@ outcome, and the worker gets the coaching note, straight from the camera actors'
 
 Watches the actor state broadcasts (read only, like relay_feed) and sends one text per milestone:
 
-    manager  confirmed (severity, what the camera saw, keyframe link), awaiting approval,
+    manager  confirmed (worker, issue, severity, action), awaiting approval,
              recurring (escalation), resolved (verified or low confidence)
     worker   the coach agent's note
 
@@ -59,15 +59,33 @@ def _last_trace(inc: dict, agent: str) -> str:
     return ""
 
 
-def briefing(inc: dict, repeat: bool = True) -> str:
-    """The few-words briefing used for the phone call (and the urgent text when it is a text)."""
-    what = f"{TYPE_LABEL.get(inc.get('type'), inc.get('type')).lower()}"
+def _first_sentence(text: str, limit: int = 140) -> str:
+    text = (text or "").strip()
+    cut = re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0]
+    return cut if len(cut) <= limit else cut[: limit - 3].rstrip() + "..."
+
+
+def _card(title: str, rows: list[tuple[str, str]]) -> str:
+    """A short labelled message: a title line, then one 'Label: value' line per field."""
+    return "\n".join([title] + [f"{k}: {v}" for k, v in rows if v])
+
+
+def _worker() -> list[tuple[str, str]]:
+    return [("Worker number", _env("WORKER_NUMBER") or "1"), ("Name", _env("WORKER_NAME") or "unknown")]
+
+
+def _issue(inc: dict, repeat: bool = False) -> str:
+    what = TYPE_LABEL.get(inc.get("type"), inc.get("type") or "violation")
     where = ZONE_LABEL.get(inc.get("zone_id"), inc.get("zone_id"))
-    who = f"Worker number {_env('WORKER_NUMBER') or '1'}. Name: {_env('WORKER_NAME') or 'unknown'}. "
-    if repeat:
-        return who + f"Issue: {what} again at the {where} after coaching, injury risk. Action: stop the task and retrain now."
-    return (who + f"Issue: {what} at the {where}, severity {inc.get('severity')} of 5, high injury risk. "
-            "Action: the worker has been coached; go to the pack line and check on them now.")
+    return f"{what}{' again' if repeat else ''}, {where}" + (" (ignored coaching)" if repeat else "")
+
+
+def briefing(inc: dict, repeat: bool = True) -> str:
+    """The spoken call: same fields as the text card, in one breath."""
+    sev = inc.get("severity")
+    action = "Stop the task and retrain now." if repeat else "Go to the pack line and check on the worker now."
+    return (f"Worker number {_env('WORKER_NUMBER') or '1'}. Name: {_env('WORKER_NAME') or 'unknown'}. "
+            f"Issue detected: {_issue(inc, repeat)}" + (f", severity {sev} of 5" if sev else "") + f". Action to be taken: {action}")
 
 
 def call_severity() -> int:
@@ -96,7 +114,6 @@ def messages_for(state: dict, sent: set) -> list[tuple[str, str, str]]:
         what = f"{TYPE_LABEL.get(inc.get('type'), inc.get('type'))} at the {ZONE_LABEL.get(inc.get('zone_id'), inc.get('zone_id'))} ({cam})"
         status = inc.get("status")
         relay = inc.get("relay") or {}
-        frame = (inc.get("keyframes") or [None])[1 if len(inc.get("keyframes") or []) > 1 else 0]
 
         def add(role: str, milestone: str, text: str) -> None:
             key = f"{iid}:{milestone}:{role}"
@@ -104,24 +121,25 @@ def messages_for(state: dict, sent: set) -> list[tuple[str, str, str]]:
                 out.append((role, key, text))
 
         sev = inc.get("severity")
+        sev_label = f"{sev}/5" if sev else ""
         if sev and status not in ("verifying", "dismissed", "unverified"):
-            seen = _summary(relay.get("triage"), ("reason", "summary")) or _last_trace(inc, "triage")
-            lines = [f"saesr alert: {what}, severity {sev}/5.", seen]
-            if frame and str(frame).startswith("http"):
-                lines.append(f"Snapshot: {frame}")
-            lines.append("The worker has been coached; I'll tell you if the fix holds.")
-            add("manager", "confirmed", "\n".join(x for x in lines if x))
+            add("manager", "confirmed", _card("saesr alert", _worker() + [
+                ("Issue detected", _issue(inc)), ("Severity", sev_label),
+                ("Action to be taken", "Worker coached. Check on them; I'll confirm if the fix holds.")]))
             coach = _summary(relay.get("coach"), ("recommended_fix", "summary")) or _last_trace(inc, "coach")
             if coach:
-                add("worker", "coach", f"saesr safety coach: {coach}")
+                add("worker", "coach", _card("saesr safety coach", [
+                    ("Issue detected", _issue(inc)), ("Action to be taken", _first_sentence(coach))]))
         if status == "awaiting_approval":
-            add("manager", "approval", f"saesr: {what} needs your approval to slow the machine. Approve it on the dashboard.")
+            add("manager", "approval", _card("saesr approval needed", _worker() + [
+                ("Issue detected", _issue(inc)), ("Action to be taken", "Approve slowing the machine on the dashboard.")]))
         if status == "recurring":
-            add("manager", "recurring", "URGENT, saesr: " + briefing(inc))
+            add("manager", "recurring", _card("URGENT saesr alert", _worker() + [
+                ("Issue detected", _issue(inc, repeat=True)), ("Severity", sev_label),
+                ("Action to be taken", "Stop the task and retrain now.")]))
         if status == "resolved":
-            how = ("no repeat during the check window (low confidence)" if inc.get("low_confidence")
-                   else "a correct lift was seen in the same zone, fix verified")
-            add("manager", "resolved", f"saesr: {what} resolved: {how}.")
+            how = "No repeat in the check window (low confidence)" if inc.get("low_confidence") else "Correct lift seen, fix verified"
+            add("manager", "resolved", _card("saesr resolved", _worker() + [("Issue detected", _issue(inc)), ("Outcome", how)]))
     return out
 
 

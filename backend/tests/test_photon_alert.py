@@ -24,13 +24,14 @@ def test_milestones_go_to_the_right_person_once():
     roles = {(r, k.split(":")[1]) for r, k, _ in first}
     assert roles == {("manager", "confirmed"), ("worker", "coach")}
     manager = next(t for r, _, t in first if r == "manager")
-    assert "severity 4/5" in manager and "https://x/k1.jpg" in manager and "Bending at the waist" in manager
-    assert "Bend at the knees" in next(t for r, _, t in first if r == "worker")
+    assert manager.splitlines()[0] == "saesr alert" and "Issue detected: Unsafe lift, pack line" in manager
+    assert "Severity: 4/5" in manager and "Action to be taken:" in manager and len(manager) < 220
+    assert "Action to be taken: Bend at the knees, keep the back straight." in next(t for r, _, t in first if r == "worker")
     sent.update(k for _, k, _ in first)
     assert messages_for(inc("actioned"), sent) == []
     rec = messages_for(inc("recurring"), sent)
     assert [k.split(":")[1] for _, k, _ in rec] == ["recurring"]
-    assert rec[0][2].startswith("URGENT, saesr: Worker number 1. Name: ") and "Action: stop the task and retrain now." in rec[0][2]
+    assert rec[0][2].startswith("URGENT saesr alert\nWorker number: 1\nName: ") and "Action to be taken: Stop the task and retrain now." in rec[0][2]
     low = messages_for(inc("resolved", low_confidence=True), sent)
     assert "low confidence" in low[0][2]
 
@@ -142,5 +143,5 @@ def test_one_channel_per_alert_by_severity(monkeypatch):
     assert channel("manager", "confirmed", 5) == "text"  # calling off: everything is a text
     monkeypatch.setenv("WORKER_NAME", "Layne")
     first = briefing({"type": "unsafe_lift", "zone_id": "zone-pack-line", "severity": 4}, repeat=False)
-    assert first.startswith("Worker number 1. Name: Layne. Issue: unsafe lift at the pack line, severity 4 of 5")
-    assert "Action:" in first
+    assert first.startswith("Worker number 1. Name: Layne. Issue detected: Unsafe lift, pack line, severity 4 of 5.")
+    assert "Action to be taken:" in first
