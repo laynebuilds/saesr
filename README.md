@@ -1,93 +1,82 @@
 # saesr
 
-Computer vision threat detection for warehouses. Cameras you already have, watched by models that flag unsafe lifts, missing PPE and people in restricted zones the moment it happens, with a clip of every incident and a weekly summary of the top risks.
-
-## How we are judged (every decision maps to one of these, 20% each)
-
-| Criterion | What it means for saesr |
-| --- | --- |
-| **Use of real-time AI and track technology** | Detection runs live on the camera feed; incidents stream in under a second. Agent Relay: camera agents and a safety supervisor coordinate directly. Terse Durable Actors: live warehouse state the dashboard subscribes to. |
-| **Originality and creativity** | Not another dashboard of boxes: agents that reason across cameras (same person, same zone, same shift) and act, not just alert. |
-| **Execution and demo** | It works live in the room on a real camera, with a recorded backup. 2 flawless violation types beat 3 shaky ones. |
-| **User experience and design** | One glance: what happened, where, how bad, the clip. Calm, clear, built for a floor manager, not an ML engineer. |
-| **Potential and impact** | Warehouse injuries are frequent and costly, and most sites already have cameras. Software only, works on existing CCTV. |
+Computer vision threat detection for warehouses. Cameras you already have, watched by models that flag unsafe lifts, people in machine zones and food-hygiene misses the moment they happen. Every risk is verified by AI agents, fixed end to end, and checked again to confirm the fix worked: detect, triage, coach, fix, verify, report.
 
 ## How it fits together
 
 ```
-camera / video file
+camera / video file / replay
       |
       v
-backend/app/cv     pose estimation (lifting), zones, PPE, clip saving
-      |  publish(event), set_frame(jpeg)        <- backend/app/bus.py, the only interface
+backend/app/cv       pose estimation (YOLO11 pose + ByteTrack), stoop-lift and zone rules,
+      |              face blur, 5 s + 5 s clips and keyframes uploaded to Supabase Storage
       v
-backend/app/main   FastAPI: /events/stream (SSE), /events/recent, /summary, /video (MJPEG), /clips
+backend/app (FastAPI)  POST /events, /stream/:camera_id (MJPEG), socket grants, admin crash/replay
       |
       v
-dashboard/         live feed, incident timeline, compliance score, heatmap, Claude "top risks"
+durable/ (Terse Durable Actors)  one CameraActor per camera + a SiteActor: incident lifecycle,
+      |                          dedupe, merge, verification window, idempotent actions, crash recovery
+      |   POST /relay/start  <->  POST /internal/cameras/:id/message
+      v
+relay service (Agent Relay)  triage, coach, fixer, verifier, reporter agents
+      |
+      v
+Supabase           write-through log: events, incidents, actions, relay_trace, corrective_records,
+                   batch_holds; Realtime for the dashboard history; Storage for keyframes and clips
+      |
+      v
+dashboard/         live camera state over the actor socket, incident timeline, approvals
 ```
 
-`MODE=mock` (default) streams realistic fake incidents from `backend/app/mock.py`, so the dashboard never waits on the CV pipeline. `MODE=live` runs the real pipeline on a webcam or video file.
+`MODE=mock` (default) streams realistic fake events from `backend/app/mock.py`. `MODE=live` runs the real pipeline on a webcam or video file, and `POST /admin/replay` loops a recorded clip as a live camera.
 
 ## The contract
 
-Every incident is one JSON event, defined in `contract/event.schema.json` (TypeScript mirror `contract/event.ts`, Python `backend/app/schema.py`). Change all three together.
+Shared shapes live in `contract/event.ts` (TypeScript), `contract/event.schema.json` and `backend/app/schema.py`. Change all three together.
 
 ```json
 {
-  "id": "evt_20261031_113205_1_0007",
-  "camera": "cam-1-loading-dock",
+  "event_id": "8f0c2a64-6a51-4f7e-9d3b-2f4b6c1e9a10",
+  "site_id": "site-demo",
+  "camera_id": "cam-01",
   "type": "unsafe_lift",
-  "severity": "high",
-  "timestamp": "2026-10-31T11:32:05Z",
-  "zone": "loading-dock",
-  "clip_url": "/clips/evt_20261031_113205_1_0007.mp4",
-  "frame_url": "/clips/evt_20261031_113205_1_0007.jpg",
-  "confidence": 0.91,
-  "bbox": [412, 180, 590, 610],
-  "detail": "back bent 62 degrees with straight legs while lifting"
+  "confidence": 0.95,
+  "timestamp": "2026-10-31T19:47:03.576Z",
+  "zone_id": "zone-pack-line",
+  "bbox": [0.19, 0.44, 0.38, 0.52],
+  "centroid": { "x": 0.38, "y": 0.70 },
+  "metrics": { "torso_angle_deg": 74, "knee_angle_deg": 124, "duration_s": 0.88, "latency_ms": 1463 },
+  "keyframes": ["https://.../keyframes/site-demo/<id>_k0.jpg", "...k1.jpg", "...k2.jpg"],
+  "clip_url": "https://.../clips/site-demo/<id>.mp4"
 }
 ```
 
-Types: `unsafe_lift`, `no_hardhat`, `no_vest`, `restricted_zone`, `no_hairnet`, `no_gloves`.
+Event types: `unsafe_lift`, `zone_breach`, `missing_hairnet`, `missing_gloves`, `compliant_observation`. Incidents, actions, actor messages and the camera/site state broadcast are defined in the same files.
 
 ## Who owns what
 
-- **Layne (backend / CV):** pose estimation for the lifting violation first, then PPE and zone detection; the FastAPI stream of events and annotated frames; clip saving for the incident timeline.
-- **Jas (frontend / product):** the dashboard (live feed, incident timeline, compliance score, heatmap); the weekly "top risks" summary (Claude on stored incidents); pitch, demo script and pre-recorded clips.
-
-## Plan (11:00 to 16:00 submission)
-
-Haunted Hacks: submissions close at **16:00** (Builderbase), judging 16:00 to 17:00, awards 17:00 to 18:00.
-
-| Time | What |
-| --- | --- |
-| 11:00 to 11:30 | Event schema, repo setup, sample factory footage |
-| 11:30 to 13:00 | Tune lifting detection on real footage; dashboard on mock data |
-| 13:00 | Lunch |
-| 13:30 to 14:45 | Swap mock for the real stream; track integration (Agent Relay, Durable Actors) |
-| 14:45 to 15:30 | Polish, summary, full demo rehearsal, record the backup demo |
-| 15:30 to 16:00 | Submit |
-
-- **Cut line:** if detection is flaky by 14:00, ship what is solid and spend the rest on polish. A reliable demo of 2 beats a shaky demo of 3.
-- **Backup:** keep a screen recording of a perfect run, so wifi or webcam trouble cannot sink the demo.
-- **Tracks:** Agent Relay (camera agents and a safety supervisor talking directly) and Terse Durable Actors (live warehouse state for the dashboard); using both earns bonus points.
-- **Stretch:** hygiene detection (hairnets and gloves), the differentiator against Intenseye and Voxel.
+- **Layne (backend / CV):** the CV pipeline (pose, stoop lift, zones, face blur, clips), the Durable Actors incident lifecycle, the FastAPI service, the Supabase schema and write-through.
+- **Jas (frontend / agents):** the dashboard and the Agent Relay service (triage, coach, fixer, verifier, reporter).
 
 ## Run it
 
 ```bash
-# backend (mock events)
-cd backend && uv run uvicorn app.main:app --reload --port 8000
+# full stack: actors server + API, each in a restart loop (POST /admin/crash brings them back in ~2 s)
+./scripts/reset_demo.sh
+RELAY_URL=http://127.0.0.1:8100 MODE=off API_EXTRAS="--extra live --extra actors" ./scripts/run_demo.sh
 
-# backend (real pipeline on webcam 0 or a video file)
-cd backend && MODE=live SOURCE=0 uv run --extra live uvicorn app.main:app --port 8000
+# play a recorded clip as a live camera
+curl -XPOST localhost:8000/admin/replay -H 'content-type: application/json' \
+  -d '{"camera_id":"cam-01","source":"/path/to/clip.mp4","loop":true}'
+
+# no CV: post test events and run a stand-in relay through a full incident cycle
+cd backend && uv run python scripts/mock_events.py --cycle
 
 # dashboard
 cd dashboard && npm install && npm run dev
 ```
 
-See `backend/README.md`, `backend/app/cv/README.md` and `dashboard/README.md` for details.
+See `backend/README.md`, `backend/app/cv/README.md`, `durable/README.md` and `dashboard/README.md` for details.
 
 ## Team
 
