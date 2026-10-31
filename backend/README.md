@@ -75,6 +75,28 @@ compliant_observation in the same zone. `--hold` keeps it serving so approved ac
 | `ACTORS_PID_FILE` | `backend/data/actors.pid` | what `/admin/crash?target=actors` kills |
 | `AGENTS_SUPERVISOR` | unset | `1` = start the old Agent Relay supervisor (`app/agents`, superseded) |
 
+## People alerts
+
+iMessage texts over Photon (`app/photon_alert.py`) and a phone call to the manager on a recurring
+violation (`app/voice_call.py`). Off unless `PHOTON_API_KEY`, `PHOTON_PROJECT_ID` and at least one
+phone are set. Sends are idempotent per incident and milestone.
+
+| Var | Meaning |
+| --- | --- |
+| `PHOTON_API_KEY`, `PHOTON_PROJECT_ID` | Photon project credentials |
+| `MANAGER_PHONE` | gets confirmed, awaiting approval, recurring (URGENT) and resolved texts |
+| `WORKER_PHONE` | gets the coach agent's note. Both phones must have texted the Photon line once, or sends fail |
+| `WORKER_NAME`, `WORKER_NUMBER` | who the escalation text and call name |
+| `CALL_MANAGER` | `1` = phone the manager when an incident goes recurring |
+| `AGENTPHONE_API_KEY`, `AGENTPHONE_AGENT_ID` | call provider (first choice); agent id unset = first agent on the account |
+| `VAPI_API_KEY`, `VAPI_PHONE_NUMBER_ID` | optional fallback when AgentPhone is not set |
+| `PHOTON_SIP_SECRET` | optional last fallback: Photon SIP call (defaults to the API key as password) |
+
+Demo driver (stack must already be running; it texts and phones real people):
+`scripts/demo_flow.sh [resolved|recurring|both]` replays `samples/real/bad_lift.mp4` / `good_lift.mp4` on cam-01
+and prints incident statuses after each step. `resolved` = bad lift then good lift; `recurring` = bad lift twice (URGENT text + call); `both` (default) runs recurring, then resolved.
+`API` (default `http://localhost:8000`), `WAIT_FIX` (default 22 s between steps), `ADMIN_TOKEN` if set on the API.
+
 ## Routes
 
 | Method | Path | What |
