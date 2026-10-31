@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "pydantic>=2.6",
     "pillow>=10.0",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +21,9 @@ live = [
     "torch>=2.4,<=2.11.0",
     "torchvision<=0.26.0",
 ]
+
+# Optional LLM reasoning for the safety supervisor (used only when OPENAI_API_KEY is set).
+agents = ["openai>=1.40"]
 
 [dependency-groups]
 dev = ["pytest>=8", "httpx>=0.27"]

@@ -4,6 +4,7 @@ MODE=mock (default) feeds the bus from app.mock. MODE=live starts the CV pipelin
 from app.cv.pipeline, imported lazily so mock mode needs no CV dependencies.
 """
 import asyncio
+import json
 import logging
 import os
 from collections import Counter
@@ -12,11 +13,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Path as PathParam
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import bus, mock
+from . import agents, bus, mock
+from .agents import activity
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("saesr.api")
@@ -71,10 +74,14 @@ async def lifespan(app: FastAPI):
     loaded = bus.load_history()
     log.info("mode=%s, %d events loaded from %s", MODE, loaded, bus.EVENTS_LOG)
     task = asyncio.create_task(_supervise(_producer()))
+    agents_task = agents.start()  # None unless Relay is configured; never blocks or crashes startup
     try:
         yield
     finally:
         task.cancel()
+        if agents_task:
+            agents_task.cancel()
+            agents.stop()
 
 
 app = FastAPI(title="Saesr API", lifespan=lifespan)
@@ -121,6 +128,52 @@ async def events_stream(request: Request):
 
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     return StreamingResponse(gen(), media_type="text/event-stream", headers=headers)
+
+
+@app.get("/agents/activity")
+def agents_activity(limit: int = Query(100, ge=1, le=activity.RECENT_MAX), kind: str | None = Query(None, pattern="^(message|action)$")):
+    """Recent agent messages and supervisor actions, newest last, plus the agent layer status."""
+    return {"status": activity.status, "items": activity.recent(limit, kind)}
+
+
+@app.get("/agents/stream")
+async def agents_stream(request: Request):
+    """Server-Sent Events: `data: <activity item json>` per agent message or action."""
+    async def gen():
+        q = activity.open_subscription()
+        try:
+            yield ": connected\n\n"
+            while not await request.is_disconnected():
+                try:
+                    item = await asyncio.wait_for(q.get(), KEEPALIVE_S)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"data: {json.dumps(item)}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            activity.close_subscription(q)
+
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=headers)
+
+
+@app.post("/agents/ack/{event_id}")
+async def agents_ack(
+    event_id: str = PathParam(pattern=r"^(all|evt_[A-Za-z0-9_\-]+)$", max_length=128),
+    by: str = Query("dashboard", pattern=r"^[A-Za-z0-9 _.@\-]+$", max_length=64),
+):
+    """Acknowledge an incident (or "all") from the dashboard. Goes over Relay to the supervisor."""
+    if agents.current is None:
+        raise HTTPException(503, "agents are off (Relay not configured)")
+    try:
+        msg = await agents.current.ack([event_id], by)
+    except Exception as err:
+        raise HTTPException(503, f"relay unavailable: {err}")
+    if msg is None:
+        raise HTTPException(503, "agents are not connected to Relay yet")
+    return {"ok": True, "relay_message_id": msg.get("id")}
 
 
 @app.get("/frame.jpg")

@@ -25,6 +25,9 @@ MODE=live SOURCE=0 uv run uvicorn app.main:app --port 8000
 | `MODE` | `mock` | `mock` = synthetic events from `app/mock.py`; `live` = `app.cv.pipeline.run(publish, set_frame, SOURCE)` |
 | `SOURCE` | `0` | Live mode input: webcam index or video file path |
 | `MOCK_EVERY` | `4` | Mock mode: average seconds between events |
+| `RELAY_LOCAL` | unset | `1` turns on the agent layer against the local `npx -y agent-relay@next init` server |
+| `RELAY_API_KEY`, `RELAY_BASE_URL` | unset | Agent layer against any Relay workspace (hosted or self-hosted) |
+| `OPENAI_API_KEY` | unset | Optional LLM wording for supervisor escalations and briefs (`uv sync --extra agents`) |
 
 ## Endpoints
 
@@ -38,6 +41,9 @@ MODE=live SOURCE=0 uv run uvicorn app.main:app --port 8000
 | GET | `/video` | MJPEG stream (`multipart/x-mixed-replace`) at about 10 fps, usable as an `<img src>` |
 | GET | `/clips/...` | Saved incident clips from `backend/clips/` |
 | GET | `/samples/...` | Placeholder media from `samples/` (used by mock events) |
+| GET | `/agents/activity` | Agent messages and supervisor actions (see `app/agents/README.md`) |
+| GET | `/agents/stream` | Server-Sent Events of the same items |
+| POST | `/agents/ack/{event_id}` | Acknowledge an incident (or `all`) over Relay |
 
 CORS is open to all origins. In mock mode the live frame is the sample still of the latest event.
 
@@ -63,6 +69,7 @@ uv run --with imageio-ffmpeg python scripts/make_samples.py
 - `app/mock.py` mock event source
 - `app/main.py` the API
 - `app/cv/` live CV pipeline (separate work)
+- `app/agents/` camera agents and the safety supervisor on Agent Relay (`app/agents/README.md`)
 
 
 ## Reliability
