@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from . import activity
-from .config import AgentsConfig
+from .config import AgentsConfig, severity_of
 from .correlator import Correlator, Finding
 from .llm import Reasoner
 from .messages import action_line, parse_ack, parse_incident
@@ -29,7 +29,7 @@ from .relay_client import RelayError, RelayUnavailable
 
 log = logging.getLogger("saesr.agents.supervisor")
 
-GEAR = {"no_hardhat": "a hard hat", "no_vest": "a high-visibility vest", "no_hairnet": "a hairnet", "no_gloves": "gloves"}
+GEAR = {"missing_hairnet": "a hairnet", "missing_gloves": "gloves"}
 RECENT_EVENTS_MAX = 50
 FINDINGS_FOR_BRIEF_MAX = 10
 
@@ -118,8 +118,8 @@ class Supervisor:
         if event is not None:
             self.events_since_brief += 1
             self.recent_events.append({
-                "id": event.id, "camera": event.camera, "type": event.type, "severity": event.severity,
-                "zone": event.zone, "timestamp": event.timestamp,
+                "id": event.event_id, "camera": event.camera_id, "type": event.type, "severity": severity_of(event),
+                "zone": event.zone_id, "timestamp": event.timestamp,
             })
             del self.recent_events[:-RECENT_EVENTS_MAX]
             for finding in self.correlator.observe(event, self.clock()):

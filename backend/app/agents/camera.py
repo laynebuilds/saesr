@@ -34,10 +34,10 @@ class CameraAgent:
         except RelayUnavailable:
             raise  # the runtime reconnects; the event stays queued on the bus side
         except RelayError as err:
-            log.warning("%s could not post %s: %s", self.camera, event.id, err)
+            log.warning("%s could not post %s: %s", self.camera, event.event_id, err)
             return
         self.posted += 1
-        activity.record_message(self.agent.name, f"#{self.channel}", text, event_id=event.id, relay_id=msg.get("id"))
+        activity.record_message(self.agent.name, f"#{self.channel}", text, event_id=event.event_id, relay_id=msg.get("id"))
 
     async def run(self) -> None:
         while True:
@@ -75,7 +75,9 @@ class CameraFleet:
         return cam
 
     async def _dispatch(self, event) -> None:
-        cam = await self.agent_for(event.camera)
+        if event.type == "compliant_observation":
+            return  # the old supervisor only reasons about violations
+        cam = await self.agent_for(event.camera_id)
         if cam.queue.full():
             cam.queue.get_nowait()  # drop the oldest rather than grow without bound
         cam.queue.put_nowait(event)

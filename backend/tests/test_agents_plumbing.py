@@ -11,15 +11,15 @@ from app.agents import activity, runtime as runtime_mod
 from app.agents.config import AgentsConfig, Rules
 from app.agents.messages import incident_text, parse_ack, parse_action, parse_incident
 from app.agents.runtime import AgentRuntime
-from app.schema import SaesrEvent
+from app.schema import Event
 from fake_relay import FakeRelay, FakeWorkspace
 
 CH = "safety-floor"
 
 
-def ev(i: int, camera: str = "cam-1-loading-dock", type_: str = "unsafe_lift", severity: str = "high", zone: str = "loading-dock") -> SaesrEvent:
-    return SaesrEvent(id=f"evt_{i:04d}", camera=camera, type=type_, severity=severity, zone=zone,
-                      detail="back bent 62 degrees", confidence=0.91)
+def ev(i: int, camera: str = "cam-1-loading-dock", type_: str = "unsafe_lift", severity: str = "high", zone: str = "loading-dock") -> Event:
+    return Event(event_id=f"evt_{i:04d}", camera_id=camera, type=type_, zone_id=zone, confidence=0.91,
+                 metrics={"severity": severity, "detail": "back bent 62 degrees"})
 
 
 class Clock:
@@ -32,8 +32,7 @@ class Clock:
 
 @pytest.fixture(autouse=True)
 def clean():
-    bus._recent.clear()
-    bus._subscribers.clear()
+    bus.reset()
     activity.reset()
     yield
     activity.reset()
@@ -85,7 +84,7 @@ def test_camera_agents_post_and_supervisor_escalates_over_relay():
         rt, task = start(ws, cfg())
         await until(lambda: activity.status["connected"])
         await bus.publish(ev(1))
-        await bus.publish(ev(2, camera="cam-2-forklift-lane", type_="no_hardhat", severity="medium", zone="forklift-lane"))
+        await bus.publish(ev(2, camera="cam-2-forklift-lane", type_="missing_hairnet", severity="medium", zone="forklift-lane"))
         await bus.publish(ev(3))
         await bus.publish(ev(4))  # third incident in loading-dock -> zone_hotspot
         await until(lambda: any(i["action"] and i["action"]["rule"] == "zone_hotspot" for i in activity.recent()))
@@ -96,7 +95,7 @@ def test_camera_agents_post_and_supervisor_escalates_over_relay():
     # one Relay identity per camera, plus the supervisor, dashboard and the floor manager handle
     assert {"cam-1-loading-dock", "cam-2-forklift-lane", "safety-supervisor", "floor-manager"} <= set(ws.agents)
     posts = ws.channel_texts(CH)
-    incidents = [(who, parse_incident(t).id) for who, t in posts if parse_incident(t)]
+    incidents = [(who, parse_incident(t).event_id) for who, t in posts if parse_incident(t)]
     assert ("cam-1-loading-dock", "evt_0001") in incidents and ("cam-2-forklift-lane", "evt_0002") in incidents
     escalation = next(t for who, t in posts if who == "safety-supervisor" and "zone_hotspot" in t)
     assert escalation.startswith("ESCALATION HIGH zone_hotspot | 3 incidents in loading-dock")
@@ -117,7 +116,7 @@ def test_unacked_high_pages_floor_manager_and_ack_by_dm_clears_it():
         rt, task = start(ws, cfg(), clock)
         await until(lambda: activity.status["connected"])
         await bus.publish(ev(10))
-        await bus.publish(ev(11, camera="cam-3-packing", zone="packing", type_="restricted_zone"))
+        await bus.publish(ev(11, camera="cam-3-packing", zone="packing", type_="zone_breach"))
         await until(lambda: len(rt.supervisor.correlator.open_high) == 2)
         # the floor manager acks one incident by DM to the supervisor (as a person would from the CLI)
         fm = await FakeRelay(ws).register("floor-manager", kind="human")
@@ -184,7 +183,7 @@ def test_relay_outage_is_survived_and_queued_events_are_posted_after_reconnect(m
         assert "RelayUnavailable" in (activity.status["error"] or "")
         ws.down = False
         await until(lambda: activity.status["connected"])
-        await until(lambda: any((p := parse_incident(t)) and p.id == "evt_0041" for _, t in ws.channel_texts(CH)))
+        await until(lambda: any((p := parse_incident(t)) and p.event_id == "evt_0041" for _, t in ws.channel_texts(CH)))
         # the supervisor reads it from Relay after the reconnect, and its earlier state survived
         await until(lambda: {"evt_0040", "evt_0041"} <= set(rt.supervisor.correlator.open_high))
         task.cancel()

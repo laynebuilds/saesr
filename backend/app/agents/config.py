@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 LOCAL_RELAY_DIR = Path.home() / ".agentworkforce" / "relay"
-PPE_TYPES = ("no_hardhat", "no_vest", "no_hairnet", "no_gloves")  # violations that travel with the person
+PPE_TYPES = ("missing_hairnet", "missing_gloves")  # violations that travel with the person
 
 
 @dataclass(frozen=True)
@@ -95,3 +95,12 @@ def load() -> AgentsConfig:
         openai_model=env.get("OPENAI_MODEL", base.openai_model),
         rules=Rules(**{**rules.__dict__, **overrides}),
     )
+
+
+# v2 events carry no severity; the old supervisor derives one from the type (metrics["severity"] overrides).
+DEFAULT_SEVERITY = {"unsafe_lift": "high", "zone_breach": "high", "missing_hairnet": "medium", "missing_gloves": "low"}
+
+
+def severity_of(event) -> str:
+    sev = (event.metrics or {}).get("severity")
+    return sev if sev in ("low", "medium", "high") else DEFAULT_SEVERITY.get(event.type, "low")
