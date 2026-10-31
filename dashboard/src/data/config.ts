@@ -1,6 +1,10 @@
 const env = import.meta.env
 
 /** VITE_MOCK=cloud: the public demo, read-only, rebuilt from the real incident log in Supabase. */
+/** Every language or vision model is presented to users as one system, never by vendor or model name. */
+export const MODEL_LABEL = 'vision model system'
+export const modelLabel = (m?: string | null) => (!m ? null : /cv|pose|rules/i.test(m) ? m : MODEL_LABEL)
+
 export const CLOUD = env.VITE_MOCK === 'cloud'
 export const MOCK = !CLOUD && env.VITE_MOCK !== '0'
 export const BACKEND_URL = (env.VITE_BACKEND_URL || 'http://localhost:8000').replace(/\/$/, '')

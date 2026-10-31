@@ -1,3 +1,4 @@
+import { modelLabel } from '../data/config'
 import { Link } from 'react-router-dom'
 import { Check, Circle, Loader2, Minus, X } from 'lucide-react'
 import type { IncidentView, TraceStep } from '../contracts/incident'
@@ -71,7 +72,7 @@ export function TraceStepper({ trace }: { trace: TraceStep[] }) {
               <span className={cn('text-sm font-semibold', (s.state === 'pending' || s.state === 'skipped') && 'text-muted')}>{STEP_LABEL[s.agent]}</span>
               <span className="text-xs text-muted">{STEP_ROLE[s.agent]}</span>
               <span className="ml-auto flex items-center gap-2 font-mono text-[11px] text-muted">
-                {s.model && <span>{s.model}</span>}
+                {s.model && <span>{modelLabel(s.model)}</span>}
                 {s.duration_ms !== null && s.agent !== 'detector' && <span className="text-fg">{duration(s.duration_ms)}</span>}
                 {s.tokens && <span>{s.tokens} tok</span>}
               </span>

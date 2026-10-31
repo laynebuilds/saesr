@@ -1,3 +1,4 @@
+import { modelLabel } from '../data/config'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { addLocalIncident } from '../data/store'
@@ -217,7 +218,7 @@ export function Analyze() {
               <input
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="Optional: what should Claude look at? e.g. the worker by the pallet"
+                placeholder="Optional: what should the vision model system look at? e.g. the worker by the pallet"
                 className="h-9 flex-1 rounded-md border border-line bg-card px-3 text-sm placeholder:text-dim focus:border-accent focus:outline-none"
               />
               <Button variant="primary" className="h-9" onClick={analyze}>
@@ -237,7 +238,7 @@ export function Analyze() {
                   <span className="font-mono text-dim">01</span> Your browser samples up to 8 frames evenly across the clip. The video itself never leaves your laptop.
                 </li>
                 <li>
-                  <span className="font-mono text-dim">02</span> Claude checks them for unsafe lifts, restricted zone entry, missing hairnets, gloves, hard hats and vests.
+                  <span className="font-mono text-dim">02</span> The vision model system checks them for unsafe lifts, restricted zone entry, missing hairnets, gloves, hard hats and vests.
                 </li>
                 <li>
                   <span className="font-mono text-dim">03</span> You get a verdict, the frames it is based on, the standard, and a fix. Click a finding to jump to that moment.
@@ -258,7 +259,7 @@ export function Analyze() {
                 <Loader2 className="size-5 animate-spin text-accent" />
                 <div>
                   <div className="font-medium">Reviewing {frames.length} frames</div>
-                  <div className="tnum font-mono text-xs text-dim">claude-opus-5-5 · {(elapsed / 1000).toFixed(1)} s</div>
+                  <div className="tnum font-mono text-xs text-dim">vision model system · {(elapsed / 1000).toFixed(1)} s</div>
                 </div>
               </div>
               <Meter value={Math.min(0.95, elapsed / 20000)} className="mt-4" />
@@ -436,7 +437,7 @@ function ResultPanel({ r, frames, onSeek, file, note }: { r: Result; frames: Fra
       )}
 
       <div className="font-mono text-[10px] text-dim">
-        {r.model} · {r.input_tokens.toLocaleString()} in / {r.output_tokens.toLocaleString()} out tokens · AI review, confirm before acting
+        {modelLabel(r.model)} · {r.input_tokens.toLocaleString()} in / {r.output_tokens.toLocaleString()} out tokens · AI review, confirm before acting
       </div>
     </div>
   )

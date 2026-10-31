@@ -124,15 +124,15 @@ export function analyzePlugin(apiKey: string | undefined): Plugin {
           const analysis = AnalysisSchema.parse(JSON.parse(text))
           send(200, {
             analysis,
-            model: msg.model,
+            model: 'vision model system',
             latency_ms: Date.now() - started,
             input_tokens: msg.usage.input_tokens,
             output_tokens: msg.usage.output_tokens,
           })
         } catch (err) {
-          if (err instanceof Anthropic.AuthenticationError) return send(401, { error: 'The Anthropic API key was rejected.' })
+          if (err instanceof Anthropic.AuthenticationError) return send(401, { error: 'The vision model system key was rejected.' })
           if (err instanceof Anthropic.RateLimitError) return send(429, { error: 'Rate limited. Try again in a few seconds.' })
-          if (err instanceof Anthropic.APIError) return send(502, { error: `Claude API error ${err.status}: ${err.message}` })
+          if (err instanceof Anthropic.APIError) return send(502, { error: `Vision model error ${err.status}: ${err.message}` })
           send(500, { error: (err as Error).message })
         }
       })
