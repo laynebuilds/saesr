@@ -17,6 +17,7 @@ Computer vision threat detection for warehouses. Cameras you already have, watch
 - **Unsafe lift:** stoop lifts (back bent past 45 degrees without squatting, hands low) fire in about 1.5 s; correct squat lifts do not. Tuned on real footage.
 - **Machine zone breach:** a person's feet inside a hazard zone for more than a second.
 - **Verified, closed loop:** every detection becomes an incident in a Durable Actor, goes through triage, coaching and fixes by Agent Relay agents, then a verification window decides resolved or recurring.
+- **Escalation to people:** the worker is coached first by iMessage (Photon); if the same violation recurs after coaching, the floor manager gets an URGENT text and an automated phone call (AgentPhone).
 - **Tiered autonomy:** coaching and corrective records run automatically; slowing a machine waits for a human approval.
 - **Crash-proof:** kill the backend mid-incident and it comes back in about 2 s with the same incidents, actions and version, and no action runs twice.
 - **Audit trail:** every event, incident, action, agent step, corrective record and batch hold is logged to Supabase, with keyframes and clips in Storage.
@@ -38,6 +39,8 @@ durable/ (Terse Durable Actors)  one CameraActor per camera + a SiteActor: incid
       |   POST /relay/start  <->  POST /internal/cameras/:id/message
       v
 relay service (Agent Relay)  triage, coach, fixer, verifier, reporter agents
+      |
+      +--> alerts  Photon iMessage (manager, worker), AgentPhone voice call (escalation)
       |
       v
 Supabase           write-through log: events, incidents, actions, relay_trace, corrective_records,
@@ -90,6 +93,10 @@ curl -XPOST localhost:8000/admin/replay -H 'content-type: application/json' \
 
 # no CV: post test events and run a stand-in relay through a full incident cycle
 cd backend && uv run python scripts/mock_events.py --cycle
+
+# people alerts: set in backend/.env (gitignored)
+# PHOTON_API_KEY, PHOTON_PROJECT_ID, MANAGER_PHONE, WORKER_PHONE, WORKER_NAME, WORKER_NUMBER,
+# AGENTPHONE_API_KEY, AGENTPHONE_AGENT_ID, CALL_MANAGER=1
 
 # dashboard
 cd dashboard && npm install && npm run dev
