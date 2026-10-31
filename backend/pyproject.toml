@@ -21,6 +21,9 @@ live = [
     "torchvision<=0.26.0",
 ]
 
+# Durable actors bridge (app/actors.py), used only when ACTORS_URL is set. Needs Python 3.11+.
+actors = ["durable-actors==0.14.6; python_version >= '3.11'"]
+
 [dependency-groups]
 dev = ["pytest>=8", "httpx>=0.27"]
 

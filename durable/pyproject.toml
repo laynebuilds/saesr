@@ -1,0 +1,14 @@
+[project]
+name = "durable"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["durable-actors==0.14.6"]
+
+[dependency-groups]
+dev = ["durable-actors[cli]==0.14.6", "pytest>=8"]
+
+[tool.mypy]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
