@@ -1,30 +1,820 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "SaesrEvent",
-  "description": "One safety incident. The only shape the backend emits and the dashboard reads. Change it only together.",
-  "type": "object",
-  "required": ["id", "camera", "type", "severity", "timestamp", "zone"],
-  "properties": {
-    "id": { "type": "string", "description": "Unique id, e.g. evt_20261031_113205_cam1_0007" },
-    "camera": { "type": "string", "description": "Camera id, e.g. cam-1-loading-dock" },
-    "type": {
-      "type": "string",
-      "enum": ["unsafe_lift", "no_hardhat", "no_vest", "restricted_zone", "no_hairnet", "no_gloves"]
+  "title": "saesr shared contract v2",
+  "description": "Generated from backend/app/schema.py. Mirror: contract/event.ts.",
+  "$defs": {
+    "Point": {
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "Point",
+      "type": "object"
     },
-    "severity": { "type": "string", "enum": ["low", "medium", "high"] },
-    "timestamp": { "type": "string", "format": "date-time", "description": "ISO 8601 UTC" },
-    "zone": { "type": "string", "description": "Named area, e.g. loading-dock, forklift-lane, packing" },
-    "clip_url": { "type": ["string", "null"], "description": "Short clip around the incident, null until saved" },
-    "frame_url": { "type": ["string", "null"], "description": "Annotated still of the moment" },
-    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "bbox": {
-      "type": ["array", "null"],
-      "items": { "type": "number" },
-      "minItems": 4,
-      "maxItems": 4,
-      "description": "[x1, y1, x2, y2] in pixels of the person involved"
+    "Event": {
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "site_id": {
+          "default": "site-demo",
+          "title": "Site Id",
+          "type": "string"
+        },
+        "camera_id": {
+          "title": "Camera Id",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "unsafe_lift",
+            "zone_breach",
+            "missing_hairnet",
+            "missing_gloves",
+            "compliant_observation"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "zone_id": {
+          "title": "Zone Id",
+          "type": "string"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bbox"
+        },
+        "centroid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Point"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metrics": {
+          "additionalProperties": true,
+          "title": "Metrics",
+          "type": "object"
+        },
+        "keyframes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keyframes",
+          "type": "array"
+        },
+        "clip_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clip Url"
+        }
+      },
+      "required": [
+        "camera_id",
+        "type",
+        "confidence",
+        "zone_id"
+      ],
+      "title": "Event",
+      "type": "object"
     },
-    "detail": { "type": ["string", "null"], "description": "Human-readable reason, e.g. back bent 62 degrees with straight legs" }
+    "Action": {
+      "properties": {
+        "action_id": {
+          "title": "Action Id",
+          "type": "string"
+        },
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "assign_coaching",
+            "open_corrective_record",
+            "flag_batch_hold",
+            "notify_floor_display",
+            "slow_machine"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "approved",
+            "done",
+            "failed",
+            "awaiting_approval",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "approved_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approved By"
+        },
+        "executed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executed At"
+        }
+      },
+      "required": [
+        "action_id",
+        "incident_id",
+        "kind"
+      ],
+      "title": "Action",
+      "type": "object"
+    },
+    "TraceEntry": {
+      "properties": {
+        "agent": {
+          "title": "Agent",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "started_at": {
+          "title": "Started At",
+          "type": "string"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ended At"
+        },
+        "output_summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Summary"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "agent",
+        "started_at"
+      ],
+      "title": "TraceEntry",
+      "type": "object"
+    },
+    "Incident": {
+      "properties": {
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "camera_id": {
+          "title": "Camera Id",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "unsafe_lift",
+            "zone_breach",
+            "missing_hairnet",
+            "missing_gloves",
+            "compliant_observation"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "zone_id": {
+          "title": "Zone Id",
+          "type": "string"
+        },
+        "status": {
+          "default": "verifying",
+          "enum": [
+            "verifying",
+            "confirmed",
+            "dismissed",
+            "unverified",
+            "awaiting_approval",
+            "actioned",
+            "resolved",
+            "recurring",
+            "closed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Severity"
+        },
+        "event_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Event Ids",
+          "type": "array"
+        },
+        "opened_at": {
+          "title": "Opened At",
+          "type": "string"
+        },
+        "updated_at": {
+          "title": "Updated At",
+          "type": "string"
+        },
+        "relay": {
+          "additionalProperties": true,
+          "title": "Relay",
+          "type": "object"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "trace": {
+          "items": {
+            "$ref": "#/$defs/TraceEntry"
+          },
+          "title": "Trace",
+          "type": "array"
+        },
+        "keyframes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keyframes",
+          "type": "array"
+        },
+        "clip_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clip Url"
+        },
+        "verify_until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verify Until"
+        },
+        "low_confidence": {
+          "default": false,
+          "title": "Low Confidence",
+          "type": "boolean"
+        },
+        "closed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Closed At"
+        }
+      },
+      "required": [
+        "incident_id",
+        "camera_id",
+        "type",
+        "zone_id",
+        "opened_at",
+        "updated_at"
+      ],
+      "title": "Incident",
+      "type": "object"
+    },
+    "RelayStart": {
+      "description": "Actor -> POST {RELAY_URL}/relay/start when an incident opens or reaches a new step.",
+      "properties": {
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "camera_id": {
+          "title": "Camera Id",
+          "type": "string"
+        },
+        "step": {
+          "default": "triage",
+          "enum": [
+            "triage",
+            "coach",
+            "fixer",
+            "verifier",
+            "reporter"
+          ],
+          "title": "Step",
+          "type": "string"
+        },
+        "event": {
+          "$ref": "#/$defs/Event"
+        },
+        "keyframes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keyframes",
+          "type": "array"
+        },
+        "clip_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clip Url"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Action"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "incident_id",
+        "camera_id",
+        "event"
+      ],
+      "title": "RelayStart",
+      "type": "object"
+    },
+    "CameraState": {
+      "properties": {
+        "camera_id": {
+          "title": "Camera Id",
+          "type": "string"
+        },
+        "site_id": {
+          "default": "site-demo",
+          "title": "Site Id",
+          "type": "string"
+        },
+        "status": {
+          "default": "online",
+          "enum": [
+            "online",
+            "offline",
+            "recovering"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "last_heartbeat": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Heartbeat"
+        },
+        "version": {
+          "default": 0,
+          "title": "Version",
+          "type": "integer"
+        },
+        "recovered_from_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recovered From Version"
+        },
+        "compliance_score": {
+          "default": 100.0,
+          "title": "Compliance Score",
+          "type": "number"
+        },
+        "counters": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Counters",
+          "type": "object"
+        },
+        "false_positives_filtered": {
+          "default": 0,
+          "title": "False Positives Filtered",
+          "type": "integer"
+        },
+        "autonomous_fixes": {
+          "default": 0,
+          "title": "Autonomous Fixes",
+          "type": "integer"
+        },
+        "incidents": {
+          "items": {
+            "$ref": "#/$defs/Incident"
+          },
+          "title": "Incidents",
+          "type": "array"
+        }
+      },
+      "required": [
+        "camera_id"
+      ],
+      "title": "CameraState",
+      "type": "object"
+    },
+    "SiteState": {
+      "properties": {
+        "site_id": {
+          "default": "site-demo",
+          "title": "Site Id",
+          "type": "string"
+        },
+        "site_score": {
+          "default": 100.0,
+          "title": "Site Score",
+          "type": "number"
+        },
+        "active_incidents": {
+          "default": 0,
+          "title": "Active Incidents",
+          "type": "integer"
+        },
+        "autonomous_fixes": {
+          "default": 0,
+          "title": "Autonomous Fixes",
+          "type": "integer"
+        },
+        "cameras": {
+          "items": {
+            "$ref": "#/$defs/CameraState"
+          },
+          "title": "Cameras",
+          "type": "array"
+        }
+      },
+      "title": "SiteState",
+      "type": "object"
+    },
+    "ActionUpdateMsg": {
+      "properties": {
+        "kind": {
+          "const": "action_update",
+          "default": "action_update",
+          "title": "Kind",
+          "type": "string"
+        },
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/Action"
+        }
+      },
+      "required": [
+        "incident_id",
+        "action"
+      ],
+      "title": "ActionUpdateMsg",
+      "type": "object"
+    },
+    "ApproveMsg": {
+      "properties": {
+        "kind": {
+          "const": "approve",
+          "default": "approve",
+          "title": "Kind",
+          "type": "string"
+        },
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "action_id": {
+          "title": "Action Id",
+          "type": "string"
+        },
+        "user": {
+          "title": "User",
+          "type": "string"
+        }
+      },
+      "required": [
+        "incident_id",
+        "action_id",
+        "user"
+      ],
+      "title": "ApproveMsg",
+      "type": "object"
+    },
+    "CloseMsg": {
+      "properties": {
+        "kind": {
+          "const": "close",
+          "default": "close",
+          "title": "Kind",
+          "type": "string"
+        },
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "incident_id"
+      ],
+      "title": "CloseMsg",
+      "type": "object"
+    },
+    "DetectionMsg": {
+      "properties": {
+        "kind": {
+          "const": "detection",
+          "default": "detection",
+          "title": "Kind",
+          "type": "string"
+        },
+        "event": {
+          "$ref": "#/$defs/Event"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "DetectionMsg",
+      "type": "object"
+    },
+    "HeartbeatMsg": {
+      "properties": {
+        "kind": {
+          "const": "heartbeat",
+          "default": "heartbeat",
+          "title": "Kind",
+          "type": "string"
+        },
+        "fps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fps"
+        }
+      },
+      "title": "HeartbeatMsg",
+      "type": "object"
+    },
+    "RelayUpdateMsg": {
+      "properties": {
+        "kind": {
+          "const": "relay_update",
+          "default": "relay_update",
+          "title": "Kind",
+          "type": "string"
+        },
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "step": {
+          "enum": [
+            "triage",
+            "coach",
+            "fixer",
+            "verifier",
+            "reporter"
+          ],
+          "title": "Step",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "output": {
+          "additionalProperties": true,
+          "title": "Output",
+          "type": "object"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TraceEntry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "incident_id",
+        "step",
+        "status"
+      ],
+      "title": "RelayUpdateMsg",
+      "type": "object"
+    },
+    "ActorMessage": {
+      "discriminator": {
+        "mapping": {
+          "action_update": "#/$defs/ActionUpdateMsg",
+          "approve": "#/$defs/ApproveMsg",
+          "close": "#/$defs/CloseMsg",
+          "detection": "#/$defs/DetectionMsg",
+          "heartbeat": "#/$defs/HeartbeatMsg",
+          "relay_update": "#/$defs/RelayUpdateMsg"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DetectionMsg"
+        },
+        {
+          "$ref": "#/$defs/RelayUpdateMsg"
+        },
+        {
+          "$ref": "#/$defs/ActionUpdateMsg"
+        },
+        {
+          "$ref": "#/$defs/ApproveMsg"
+        },
+        {
+          "$ref": "#/$defs/CloseMsg"
+        },
+        {
+          "$ref": "#/$defs/HeartbeatMsg"
+        }
+      ]
+    }
   },
-  "additionalProperties": false
+  "$ref": "#/$defs/Event"
 }

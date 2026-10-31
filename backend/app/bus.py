@@ -15,7 +15,7 @@ from collections import deque
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
-from .schema import SaesrEvent
+from .schema import Event
 
 log = logging.getLogger("saesr.bus")
 
@@ -24,7 +24,7 @@ SUBSCRIBER_QUEUE_MAX = 256  # a slow client drops its oldest events instead of g
 EVENTS_LOG = Path(os.environ.get("EVENTS_LOG", Path(__file__).resolve().parent.parent / "data" / "events.jsonl"))
 
 _subscribers: set[asyncio.Queue] = set()
-_recent: deque[SaesrEvent] = deque(maxlen=RECENT_MAX)
+_recent: deque[Event] = deque(maxlen=RECENT_MAX)
 _frame: Optional[bytes] = None
 _frame_seq = 0
 
@@ -37,14 +37,14 @@ def load_history() -> int:
     with EVENTS_LOG.open() as f:
         for line in f:
             try:
-                _recent.append(SaesrEvent.model_validate_json(line))
+                _recent.append(Event.model_validate_json(line))
                 loaded += 1
             except Exception:
                 continue
     return loaded
 
 
-def _persist(event: SaesrEvent) -> None:
+def _persist(event: Event) -> None:
     try:
         EVENTS_LOG.parent.mkdir(parents=True, exist_ok=True)
         with EVENTS_LOG.open("a") as f:
@@ -53,7 +53,7 @@ def _persist(event: SaesrEvent) -> None:
         log.warning("could not persist event %s: %s", event.id, err)
 
 
-async def publish(event: SaesrEvent) -> None:
+async def publish(event: Event) -> None:
     _recent.append(event)
     _persist(event)
     for q in list(_subscribers):
@@ -80,7 +80,7 @@ def frame_seq() -> int:
     return _frame_seq
 
 
-def recent(limit: int = 100) -> list[SaesrEvent]:
+def recent(limit: int = 100) -> list[Event]:
     return list(_recent)[-limit:]
 
 
@@ -95,7 +95,7 @@ def close_subscription(q: asyncio.Queue) -> None:
     _subscribers.discard(q)
 
 
-async def subscribe() -> AsyncIterator[SaesrEvent]:
+async def subscribe() -> AsyncIterator[Event]:
     q: asyncio.Queue = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAX)
     _subscribers.add(q)
     try:
