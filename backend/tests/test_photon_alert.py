@@ -123,3 +123,24 @@ _real_sleep = asyncio.sleep
 
 async def _fast_sleep(_s):
     await _real_sleep(0)
+
+
+def test_one_channel_per_alert_by_severity(monkeypatch):
+    from app.photon_alert import briefing, channel
+
+    monkeypatch.setenv("CALL_MANAGER", "1")
+    monkeypatch.delenv("CALL_SEVERITY", raising=False)
+    assert channel("manager", "confirmed", 4) == "call"  # high: phone, no text
+    assert channel("manager", "confirmed", 5) == "call"
+    assert channel("manager", "confirmed", 3) == "text"  # medium and below: text only
+    assert channel("manager", "recurring", 4) == "call"
+    assert channel("manager", "resolved", 5) == "text"  # outcomes are always a text
+    assert channel("worker", "coach", 5) == "text"  # the worker always gets the coaching text
+    monkeypatch.setenv("CALL_SEVERITY", "5")
+    assert channel("manager", "confirmed", 4) == "text"
+    monkeypatch.setenv("CALL_MANAGER", "0")
+    assert channel("manager", "confirmed", 5) == "text"  # calling off: everything is a text
+    monkeypatch.setenv("WORKER_NAME", "Layne")
+    first = briefing({"type": "unsafe_lift", "zone_id": "zone-pack-line", "severity": 4}, repeat=False)
+    assert first.startswith("Worker number 1. Name: Layne. Issue: unsafe lift at the pack line, severity 4 of 5")
+    assert "Action:" in first

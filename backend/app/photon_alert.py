@@ -59,11 +59,32 @@ def _last_trace(inc: dict, agent: str) -> str:
     return ""
 
 
-def briefing(inc: dict) -> str:
-    """The few-words escalation used for both the urgent text and the phone call."""
-    issue = f"{TYPE_LABEL.get(inc.get('type'), inc.get('type')).lower()} again at the {ZONE_LABEL.get(inc.get('zone_id'), inc.get('zone_id'))} after coaching, injury risk"
-    return (f"Worker number {_env('WORKER_NUMBER') or '1'}. Name: {_env('WORKER_NAME') or 'unknown'}. "
-            f"Issue: {issue}. Action: stop the task and retrain now.")
+def briefing(inc: dict, repeat: bool = True) -> str:
+    """The few-words briefing used for the phone call (and the urgent text when it is a text)."""
+    what = f"{TYPE_LABEL.get(inc.get('type'), inc.get('type')).lower()}"
+    where = ZONE_LABEL.get(inc.get("zone_id"), inc.get("zone_id"))
+    who = f"Worker number {_env('WORKER_NUMBER') or '1'}. Name: {_env('WORKER_NAME') or 'unknown'}. "
+    if repeat:
+        return who + f"Issue: {what} again at the {where} after coaching, injury risk. Action: stop the task and retrain now."
+    return (who + f"Issue: {what} at the {where}, severity {inc.get('severity')} of 5, high injury risk. "
+            "Action: the worker has been coached; go to the pack line and check on them now.")
+
+
+def call_severity() -> int:
+    """Severity at or above which the manager is phoned instead of texted (standard: 4 = high, 5 = critical)."""
+    try:
+        return int(_env("CALL_SEVERITY") or 4)
+    except ValueError:
+        return 4
+
+
+def channel(role: str, milestone: str, severity) -> str:
+    """One channel per alert, by severity: "call" for high/critical first alerts and escalations to the
+    manager when calling is on, "text" for everything else (lower severity, outcomes, the worker)."""
+    calling = (_env("CALL_MANAGER") or _env("PHOTON_CALL")) == "1"
+    if role == "manager" and milestone in ("confirmed", "recurring") and calling and (severity or 0) >= call_severity():
+        return "call"
+    return "text"
 
 
 def messages_for(state: dict, sent: set) -> list[tuple[str, str, str]]:
@@ -161,12 +182,18 @@ async def run(client: Optional[httpx.AsyncClient] = None) -> None:
                 primed.add(state.get("camera_id"))
                 sent.update(k for _, k, _ in messages_for(state, sent))
                 continue
+            incidents = {i.get("incident_id"): i for i in state.get("incidents") or []}
             for role, key, text in messages_for(state, sent):
                 if not phones.get(role):
                     sent.add(key)
                     continue
-                if key.endswith(":recurring:manager") and (_env("CALL_MANAGER") or _env("PHOTON_CALL")) == "1":
-                    asyncio.create_task(_call_manager(phones[role], key))
+                inc_id, milestone = key.split(":")[0], key.split(":")[1]
+                inc = incidents.get(inc_id) or {}
+                if channel(role, milestone, inc.get("severity")) == "call":
+                    # one call attempt per alert (_called); if it cannot be placed, the text below goes instead
+                    if await _call_manager(phones[role], key, inc, repeat=milestone == "recurring"):
+                        sent.add(key)
+                        continue
                 try:
                     if await photon.send(phones[role], text, key):
                         sent.add(key)
@@ -180,21 +207,20 @@ async def run(client: Optional[httpx.AsyncClient] = None) -> None:
 _called: set = set()
 
 
-async def _call_manager(phone: str, key: str) -> None:
-    """Phone the manager once per escalation with the spoken briefing; the urgent text goes regardless."""
+async def _call_manager(phone: str, key: str, inc: dict, repeat: bool) -> bool:
+    """Phone the manager once with the spoken briefing. True if the call was placed."""
     if key in _called:
-        return
+        return True
     _called.add(key)
     from . import voice_call
 
-    inc_id = key.split(":")[0]
-    state = [s for s in _last_states.values() for i in s.get("incidents") or [] if i.get("incident_id") == inc_id]
-    inc = next(i for i in state[0]["incidents"] if i.get("incident_id") == inc_id) if state else {}
-    text = "saesr safety alert. " + briefing(inc) + " Goodbye."
+    text = "saesr safety alert. " + briefing(inc, repeat=repeat) + " Goodbye."
     try:
-        log.info("calling the manager: %s", await voice_call.call(phone, text))
+        outcome = await voice_call.call(phone, text)
     except Exception as err:  # never let a phone problem touch detection
-        log.warning("call to the manager failed: %s", err)
+        outcome = f"error {err}"
+    log.info("calling the manager (%s): %s", key, outcome)
+    return outcome.startswith("placed") or outcome == "delivered"
 
 
 _last_states: dict = {}
