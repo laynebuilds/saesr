@@ -1,0 +1,25 @@
+{
+  "cam-1-loading-dock": {
+    "default_zone": "loading-dock",
+    "zones": [
+      {"name": "forklift-lane", "restricted": true, "polygon": [[0.62, 0.45], [1.0, 0.45], [1.0, 1.0], [0.62, 1.0]]},
+      {"name": "loading-dock", "restricted": false, "polygon": [[0.0, 0.45], [0.62, 0.45], [0.62, 1.0], [0.0, 1.0]]}
+    ]
+  },
+  "cam-2-forklift-lane": {
+    "default_zone": "forklift-lane",
+    "zones": [
+      {"name": "forklift-lane", "restricted": true, "polygon": [[0.3, 0.4], [0.7, 0.4], [0.85, 1.0], [0.15, 1.0]]}
+    ]
+  },
+  "cam-3-packing": {
+    "default_zone": "packing",
+    "zones": []
+  },
+  "cam-4-cold-store": {
+    "default_zone": "cold-store",
+    "zones": [
+      {"name": "cold-store-door", "restricted": true, "polygon": [[0.0, 0.5], [0.25, 0.5], [0.25, 1.0], [0.0, 1.0]]}
+    ]
+  }
+}
