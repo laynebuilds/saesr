@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -53,6 +54,11 @@ async def run(url: str, key: str, client: Optional[httpx.AsyncClient] = None) ->
                     continue  # someone else claimed it
                 if row.get("type") == "damaged_packaging":
                     await _packaging_alert(row)
+                if row.get("video_url"):
+                    # the full video: the CV pose pipeline decides (skeleton, detection, clip, incident)
+                    asyncio.create_task(_run_cv(c, row))
+                    continue
+                if row.get("type") == "damaged_packaging":
                     continue
                 event = to_event(row)
                 if event:
@@ -63,6 +69,31 @@ async def run(url: str, key: str, client: Optional[httpx.AsyncClient] = None) ->
         except (httpx.HTTPError, ValueError, KeyError) as err:
             log.warning("web inbox poll failed: %s", err)
         await asyncio.sleep(POLL_S)
+
+
+CV_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
+
+
+async def _run_cv(c: httpx.AsyncClient, row: dict) -> None:
+    """Download the uploaded video and play it once through the CV pipeline on its camera."""
+    try:
+        from .cv import pipeline
+    except Exception as err:  # live extra not installed
+        log.warning("cannot run CV on upload %s: %s", row.get("id"), err)
+        return
+    CV_DIR.mkdir(parents=True, exist_ok=True)
+    url = row["video_url"]
+    path = CV_DIR / f"web-{row['id']}{Path(url.split('?')[0]).suffix or '.mp4'}"
+    try:
+        async with c.stream("GET", url, timeout=120) as r:
+            r.raise_for_status()
+            with path.open("wb") as f:
+                async for chunk in r.aiter_bytes():
+                    f.write(chunk)
+        log.info("web upload %s: running the CV pipeline on %s", row["id"], path.name)
+        await pipeline.run(bus.publish, bus.set_frame, str(path), camera_id=row.get("camera_id") or "cam-01", loop=False)
+    except Exception as err:
+        log.warning("CV on upload %s failed: %s", row.get("id"), err)
 
 
 async def _packaging_alert(row: dict) -> None:

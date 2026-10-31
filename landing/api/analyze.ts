@@ -47,6 +47,7 @@ const RequestSchema = z.object({
   filename: z.string().max(300).optional(),
   duration_s: z.number().optional(),
   note: z.string().max(1000).optional(),
+  video_url: z.string().url().max(500).optional(),
   frames: z
     .array(z.object({ t: z.number(), data: z.string().min(100) }))
     .min(1)
@@ -64,11 +65,12 @@ async function logDetection(input: z.infer<typeof RequestSchema>, analysis: z.in
   const url = (env.SUPABASE_URL ?? '').replace(/\/$/, '')
   const key = env.SUPABASE_SECRET_KEY
   const v = analysis.violations.filter((x) => PIPELINE_TYPES.has(x.type)).sort((a, b) => b.severity - a.severity)[0]
-  if (analysis.verdict !== 'violation' || !v) return { logged: false, reason: 'no pipeline violation' }
+  // With the full video uploaded, the floor runs the CV pose pipeline on it whatever the verdict.
+  if (!input.video_url && (analysis.verdict !== 'violation' || !v)) return { logged: false, reason: 'no pipeline violation' }
   if (!url || !key) return { logged: false, reason: 'Supabase not configured' }
   const headers = { apikey: key, authorization: `Bearer ${key}` }
   const stamp = `web-${Date.now()}`
-  const picks = (v.frame_indices.length ? v.frame_indices : [0]).slice(0, 3)
+  const picks = (v?.frame_indices.length ? v.frame_indices : [0]).slice(0, 3)
   const keyframes: string[] = []
   for (const [n, i] of picks.entries()) {
     const f = input.frames[Math.min(i, input.frames.length - 1)]
@@ -83,11 +85,18 @@ async function logDetection(input: z.infer<typeof RequestSchema>, analysis: z.in
   const r = await fetch(`${url}/rest/v1/web_detections`, {
     method: 'POST',
     headers: { ...headers, 'content-type': 'application/json', prefer: 'return=representation' },
-    body: JSON.stringify({ type: v.type, severity: v.severity, confidence: v.confidence, summary: v.description, keyframes }),
+    body: JSON.stringify({
+      type: v?.type ?? 'video_upload',
+      severity: v?.severity ?? null,
+      confidence: v?.confidence ?? null,
+      summary: v?.description ?? analysis.headline,
+      keyframes,
+      video_url: input.video_url ?? null,
+    }),
   })
   if (!r.ok) return { logged: false, reason: `log failed ${r.status}` }
   const [row] = await r.json()
-  return { logged: true, id: row?.id, type: v.type, severity: v.severity }
+  return { logged: true, id: row?.id, type: v?.type ?? 'video_upload', severity: v?.severity ?? null, cv_pipeline: !!input.video_url }
 }
 
 export default async function handler(req: any, res: any) {

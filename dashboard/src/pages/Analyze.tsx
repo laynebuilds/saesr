@@ -1,3 +1,4 @@
+import { supabase } from '../data/supabase'
 import { modelLabel } from '../data/config'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -43,6 +44,21 @@ const VERDICT = {
   no_violation: { label: 'No violation', icon: CheckCircle2, color: 'var(--ready)', bg: 'var(--ready-bg)' },
   unclear: { label: 'Unclear', icon: HelpCircle, color: 'var(--watch)', bg: 'var(--watch-bg)' },
 } as const
+
+/** On saesr.com: send the full video to Storage so the floor runs the CV pose pipeline on it
+ *  (skeleton, detection, incident). Best effort: without it the review still works. */
+async function uploadForCv(file: File | null): Promise<string | undefined> {
+  if (!file || !file.type.startsWith('video/') || !supabase) return undefined
+  try {
+    const r = await fetch('/api/upload-url', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ filename: file.name }) })
+    if (!r.ok) return undefined
+    const { path, token, public_url } = await r.json()
+    const { error } = await supabase.storage.from('clips').uploadToSignedUrl(path, token, file, { contentType: file.type || 'video/mp4' })
+    return error ? undefined : public_url
+  } catch {
+    return undefined
+  }
+}
 
 // The upload survives leaving the page: it is kept here until the user removes it.
 const kept: { file: File | null; videoUrl: string | null; frames: Frame[]; dur: number | null; note: string; phase: Phase; result: Result | null } = {
@@ -100,10 +116,11 @@ export function Analyze() {
     setPhase('analyzing')
     setError(null)
     try {
+      const video_url = await uploadForCv(file)
       const r = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ filename: file?.name, duration_s: dur ?? undefined, note: note || undefined, frames: frames.map(({ t, data }) => ({ t, data })) }),
+        body: JSON.stringify({ filename: file?.name, duration_s: dur ?? undefined, note: note || undefined, video_url, frames: frames.map(({ t, data }) => ({ t, data })) }),
       })
       const body = await r.json()
       if (!r.ok) throw new Error(body.error ?? `Analysis failed (${r.status})`)
