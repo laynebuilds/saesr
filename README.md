@@ -83,6 +83,12 @@ Event types: `unsafe_lift`, `zone_breach`, `missing_hairnet`, `missing_gloves`, 
 ## Run it
 
 ```bash
+# Agent Relay server (the relay agents post every step to #safety-floor; RELAY_LOCAL=1 in backend/.env)
+npx -y agent-relay@next init --tools none
+./scripts/run_relay.sh
+# watch the agents talk on Agent Relay, live
+cd backend && RELAY_LOCAL=1 uv run python scripts/watch_relay.py --as viewer --read-only
+
 # full stack: actors server + API, each in a restart loop (POST /admin/crash brings them back in ~2 s)
 ./scripts/reset_demo.sh
 RELAY_URL=http://127.0.0.1:8100 MODE=off API_EXTRAS="--extra live --extra actors" ./scripts/run_demo.sh
