@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import bus, mock
+from . import actors, bus, mock
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("saesr.api")
@@ -71,10 +71,15 @@ async def lifespan(app: FastAPI):
     loaded = bus.load_history()
     log.info("mode=%s, %d events loaded from %s", MODE, loaded, bus.EVENTS_LOG)
     task = asyncio.create_task(_supervise(_producer()))
+    # Durable actors bridge: a no-op unless ACTORS_URL is set (see app/actors.py).
+    cameras = list(mock.CAMERAS) if MODE == "mock" else [os.environ.get("SAESR_CAMERA", "cam-1-loading-dock")]
+    bridge = actors.start(cameras)
     try:
         yield
     finally:
         task.cancel()
+        if bridge:
+            bridge.cancel()
 
 
 app = FastAPI(title="Saesr API", lifespan=lifespan)
@@ -193,3 +198,45 @@ def summary(hours: float = Query(24, gt=0, le=24 * 31)):
         "last_event": window[-1].model_dump(mode="json") if window else None,
         "mode": MODE,
     }
+
+
+@app.get("/site")
+async def site():
+    """Live warehouse state from the Site durable actor (incidents, counters, score, open alerts,
+    camera health). Falls back to a local computation from the bus when actors are off or down;
+    `source` says which one answered."""
+    snap = await actors.site_snapshot()
+    if snap is not None:
+        return {"source": "actors", **snap}
+    events = bus.recent(1000)
+    s = summary(24)
+    newest = [e.model_dump(mode="json") for e in reversed(events)]
+
+    def as_incident(e: dict) -> dict:
+        return {"event": e, "recorded_at": e["timestamp"], "acknowledged_by": None, "acknowledged_at": None}
+
+    return {
+        "source": "local",
+        "site": actors.SITE_ID,
+        "version": len(events),
+        "updated_at": events[-1].timestamp if events else None,
+        "total": len(events),
+        "by_zone": dict(Counter(e.zone for e in events)),
+        "by_camera": dict(Counter(e.camera for e in events)),
+        "by_type": dict(Counter(e.type for e in events)),
+        "by_severity": dict(Counter(e.severity for e in events)),
+        "compliance_score": s["compliance_score"],
+        "weighted_incidents_per_hour": s["weighted_incidents_per_hour"],
+        "window_hours": s["window_hours"],
+        "open_alerts_count": len(events),  # no acknowledgements without actors
+        "open_alerts": [as_incident(e) for e in newest[:50]],
+        "recent": [as_incident(e) for e in newest[:20]],
+        "cameras": {},
+    }
+
+
+@app.get("/actors/status")
+def actors_status():
+    """Bridge health: connected, buffered, sent, retries, drops. enabled=false when ACTORS_URL is unset."""
+    b = actors.current()
+    return b.status() if b else {"enabled": False}
