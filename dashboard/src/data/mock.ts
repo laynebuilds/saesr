@@ -12,8 +12,8 @@ import { addActivity, applySite, markDown, setState } from './store'
 import type { Source } from './source'
 import { asset } from './config'
 
-const HAIKU = 'claude-haiku-4-5'
-const SONNET = 'claude-sonnet-5-5'
+const HAIKU = 'vision-model-fast'
+const SONNET = 'vision-model'
 const VERIFY_WINDOW_MS = 20_000
 
 const CLIP: Record<string, string> = {
