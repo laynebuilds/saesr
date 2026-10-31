@@ -17,7 +17,7 @@ export default function App() {
     return () => source.stop()
   }, [])
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '') || undefined}>
       <Shell>
         <Routes>
           <Route path="/" element={<Overview />} />

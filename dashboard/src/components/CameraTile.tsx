@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { IncidentView } from '../contracts/incident'
-import { MOCK, mediaUrl, videoUrl } from '../data/config'
+import { MOCK, asset, mediaUrl, videoUrl } from '../data/config'
 import { TYPE_LABEL, zoneLabel } from '../lib/format'
 import { cn } from '../lib/cn'
 import { Dot } from './ui'
@@ -18,7 +18,7 @@ function useTick() {
 
 const camNo = (c: string) => c.match(/^cam-(\d+)/)?.[1]?.padStart(2, '0') ?? c
 const CAM_NAME: Record<string, string> = { 'cam-01': 'warehouse', 'cam-02': 'food line' }
-const CAM_SCENE: Record<string, string> = { 'cam-01': '/footage/restricted_zone', 'cam-02': '/footage/no_gloves' }
+const CAM_SCENE: Record<string, string> = { 'cam-01': asset('/footage/restricted_zone'), 'cam-02': asset('/footage/no_gloves') }
 
 /** CCTV-style frame: feed (live MJPEG or the last evidence frame/clip), scanlines, OSD text. */
 export function CameraFeed({

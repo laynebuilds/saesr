@@ -20,4 +20,7 @@ export function mediaUrl(u: string | null | undefined): string | null {
 /** Annotated MJPEG for one camera (backend draws the boxes). */
 export const videoUrl = (camera: string) => `${BACKEND_URL}/stream/${camera}`
 
+/** Public-folder path under the build's base, so a build served from /demo/ still finds its footage. */
+export const asset = (p: string) => import.meta.env.BASE_URL.replace(/\/$/, '') + p
+
 export const DEMO = new URLSearchParams(location.search).has('demo')
