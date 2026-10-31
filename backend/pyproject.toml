@@ -15,6 +15,10 @@ live = [
     "ultralytics>=8.2",
     "opencv-python>=4.9",
     "numpy>=1.26",
+    "lap>=0.5",
+    # Newer torch wheels need macOS 14; these are the latest that install on macOS 13 (tested).
+    "torch>=2.4,<=2.11.0",
+    "torchvision<=0.26.0",
 ]
 
 [dependency-groups]
