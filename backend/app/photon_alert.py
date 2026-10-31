@@ -207,7 +207,11 @@ async def run(client: Optional[httpx.AsyncClient] = None) -> None:
                     continue
                 inc_id, milestone = key.split(":")[0], key.split(":")[1]
                 inc = incidents.get(inc_id) or {}
-                if channel(role, milestone, inc.get("severity")) == "call":
+                ch = channel(role, milestone, inc.get("severity"))
+                if role == "manager" and ch == "text" and _env("MANAGER_CALL_ONLY") == "1":
+                    sent.add(key)  # demo setting: the manager is only ever phoned
+                    continue
+                if ch == "call":
                     # one call attempt per alert (_called); if it cannot be placed, the text below goes instead
                     if await _call_manager(phones[role], key, inc, repeat=milestone == "recurring"):
                         sent.add(key)
