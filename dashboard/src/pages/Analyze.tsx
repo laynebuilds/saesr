@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { addLocalIncident } from '../data/store'
 import { adaptIncident } from '../data/adapt'
 import type { EventType, Incident } from '../contracts/event'
-import { AlertTriangle, CheckCircle2, FileVideo, HelpCircle, Loader2, ScanSearch, Upload, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FileVideo, HelpCircle, Loader2, ScanSearch, Trash2, Upload, X } from 'lucide-react'
 import { framesFromFile, type Frame } from '../lib/frames'
 import { TYPE_LABEL, duration, zoneLabel } from '../lib/format'
 import { Button, Card, CardHeader, Empty, Label, Meter, Pill } from '../components/ui'
@@ -44,21 +44,28 @@ const VERDICT = {
   unclear: { label: 'Unclear', icon: HelpCircle, color: 'var(--watch)', bg: 'var(--watch-bg)' },
 } as const
 
+// The upload survives leaving the page: it is kept here until the user removes it.
+const kept: { file: File | null; videoUrl: string | null; frames: Frame[]; dur: number | null; note: string; phase: Phase; result: Result | null } = {
+  file: null, videoUrl: null, frames: [], dur: null, note: '', phase: 'idle', result: null,
+}
+
 export function Analyze() {
-  const [file, setFile] = useState<File | null>(null)
-  const [videoUrl, setVideoUrl] = useState<string | null>(null)
-  const [frames, setFrames] = useState<Frame[]>([])
-  const [dur, setDur] = useState<number | null>(null)
-  const [note, setNote] = useState('')
-  const [phase, setPhase] = useState<Phase>('idle')
+  const [file, setFile] = useState<File | null>(kept.file)
+  const [videoUrl, setVideoUrl] = useState<string | null>(kept.videoUrl)
+  const [frames, setFrames] = useState<Frame[]>(kept.frames)
+  const [dur, setDur] = useState<number | null>(kept.dur)
+  const [note, setNote] = useState(kept.note)
+  const [phase, setPhase] = useState<Phase>(kept.phase === 'analyzing' || kept.phase === 'sampling' ? (kept.frames.length ? 'ready' : 'idle') : kept.phase)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<Result | null>(null)
+  const [result, setResult] = useState<Result | null>(kept.result)
   const [elapsed, setElapsed] = useState(0)
   const [drag, setDrag] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => () => void (videoUrl && URL.revokeObjectURL(videoUrl)), [videoUrl])
+  useEffect(() => {
+    Object.assign(kept, { file, videoUrl, frames, dur, note, phase, result })
+  }, [file, videoUrl, frames, dur, note, phase, result])
   useEffect(() => {
     if (phase !== 'analyzing') return
     const t0 = Date.now()
@@ -72,6 +79,7 @@ export function Analyze() {
       setPhase('error')
       return
     }
+    if (videoUrl) URL.revokeObjectURL(videoUrl)
     setFile(f)
     setResult(null)
     setError(null)
@@ -108,6 +116,7 @@ export function Analyze() {
   }
 
   const reset = () => {
+    if (videoUrl) URL.revokeObjectURL(videoUrl)
     setFile(null)
     setVideoUrl(null)
     setFrames([])
@@ -121,7 +130,6 @@ export function Analyze() {
     const f = frames[i]
     if (f && videoRef.current) {
       videoRef.current.currentTime = f.t
-      videoRef.current.pause()
     }
   }
 
@@ -176,7 +184,7 @@ export function Analyze() {
                 {isImage ? (
                   <img src={videoUrl ?? ''} alt="Upload" className="size-full object-contain" />
                 ) : (
-                  <video ref={videoRef} src={videoUrl ?? undefined} controls muted playsInline className="size-full object-contain" />
+                  <video ref={videoRef} src={videoUrl ?? undefined} controls muted playsInline autoPlay loop className="size-full object-contain" />
                 )}
               </div>
               <div className="flex items-center gap-2 border-t border-line px-4 py-2 font-mono text-[11px] text-muted">
@@ -185,6 +193,9 @@ export function Analyze() {
                 <span className="ml-auto text-dim">
                   {(file.size / 1e6).toFixed(1)} MB{dur ? ` · ${dur.toFixed(1)} s` : ''}
                 </span>
+                <button onClick={reset} className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-dim hover:bg-white/5 hover:text-critical" title="Remove this upload">
+                  <Trash2 className="size-3.5" /> Remove
+                </button>
               </div>
             </Card>
           )}
