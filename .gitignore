@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+.next/
+.env
+.env.local
+backend/clips/*
+!backend/clips/.gitkeep
+*.pt
+.DS_Store

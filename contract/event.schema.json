@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SaesrEvent",
+  "description": "One safety incident. The only shape the backend emits and the dashboard reads. Change it only together.",
+  "type": "object",
+  "required": ["id", "camera", "type", "severity", "timestamp", "zone"],
+  "properties": {
+    "id": { "type": "string", "description": "Unique id, e.g. evt_20261031_113205_cam1_0007" },
+    "camera": { "type": "string", "description": "Camera id, e.g. cam-1-loading-dock" },
+    "type": {
+      "type": "string",
+      "enum": ["unsafe_lift", "no_hardhat", "no_vest", "restricted_zone", "no_hairnet", "no_gloves"]
+    },
+    "severity": { "type": "string", "enum": ["low", "medium", "high"] },
+    "timestamp": { "type": "string", "format": "date-time", "description": "ISO 8601 UTC" },
+    "zone": { "type": "string", "description": "Named area, e.g. loading-dock, forklift-lane, packing" },
+    "clip_url": { "type": ["string", "null"], "description": "Short clip around the incident, null until saved" },
+    "frame_url": { "type": ["string", "null"], "description": "Annotated still of the moment" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "bbox": {
+      "type": ["array", "null"],
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "[x1, y1, x2, y2] in pixels of the person involved"
+    },
+    "detail": { "type": ["string", "null"], "description": "Human-readable reason, e.g. back bent 62 degrees with straight legs" }
+  },
+  "additionalProperties": false
+}
