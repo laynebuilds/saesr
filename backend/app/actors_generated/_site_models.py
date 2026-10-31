@@ -25,6 +25,8 @@ class TraceEntry(ClientModel):
     ended_at: Annotated[str | None, Field(title='Ended At')] = None
     output_summary: Annotated[str | None, Field(title='Output Summary')] = None
     error: Annotated[str | None, Field(title='Error')] = None
+RpcMethodForgetCameraParameter0: TypeAlias = str
+RpcMethodForgetCameraResult: TypeAlias = bool
 if TYPE_CHECKING:
     JsonValue: TypeAlias = Optional[Union[str, int, float, bool, list['JsonValue'], dict[str, 'JsonValue']]]
 else:
@@ -208,6 +210,8 @@ class ContractTypes(ClientModel):
     """
     Named wire types used by this generated actor client.
     """
+    RpcMethod_forget_camera_Parameter_0: RpcMethodForgetCameraParameter0
+    RpcMethod_forget_camera_Result: RpcMethodForgetCameraResult
     RpcMethod_state_Result: RpcMethodStateResult
     RpcMethod_update_camera_Parameter_0: RpcMethodUpdateCameraParameter0
     SocketMetadata_1: Annotated[SocketMetadata, Field(alias='SocketMetadata')]

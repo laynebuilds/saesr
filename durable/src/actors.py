@@ -814,6 +814,14 @@ class Site(Actor[Viewer, SocketCommand, SiteState]):
     def state(self) -> SiteState:
         return self._state()
 
+    def forget_camera(self, camera_id: str) -> bool:
+        """Drop a camera from the roll-up (test cleanup). It reappears on its next change."""
+        if self.cameras.pop(camera_id, None) is None:
+            return False
+        self.version += 1
+        self.broadcast(self._state())
+        return True
+
     def on_connect(self, socket: SiteSocket) -> None:
         self.set_websocket_auto_response("ping", "pong")
         socket.send(self._state())

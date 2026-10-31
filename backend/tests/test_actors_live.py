@@ -3,7 +3,7 @@
     cd durable && uv run durable-actors dev                                     # terminal 1
     cd backend && uv run --extra actors --group dev pytest -q tests/test_actors_live.py
 
-Uses fresh camera ids per test, so it never touches cam-01 / cam-02 demo state.
+Uses fresh camera ids per test (never cam-01 / cam-02) and removes them from the site-demo roll-up after.
 """
 import asyncio
 import os
@@ -85,5 +85,10 @@ def test_end_to_end_against_real_server(monkeypatch):
             actors.close_state_subscription(q)
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+            # Keep the shared site-demo roll-up clean for the demo.
+            from durable_actors import AsyncClient
+
+            async with AsyncClient(control_plane_url=URL) as c:
+                await c.invoke("Site", "site-demo", "forget_camera", [cam])
 
     asyncio.run(scenario())

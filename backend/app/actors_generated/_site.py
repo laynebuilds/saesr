@@ -17,6 +17,13 @@ class Stub:
         self._actor_id = actor_id
         self._transport = transport if transport is not None else _default_client()
 
+    def forget_camera(_self, camera_id: _models.RpcMethodForgetCameraParameter0) -> _models.RpcMethodForgetCameraResult:
+        """Drop a camera from the roll-up (test cleanup). It reappears on its next change."""
+        _args = _arguments([_argument(camera_id, _TypeAdapter(_models.RpcMethodForgetCameraParameter0))], [_UNSET])
+        _result = _self._transport.invoke('Site', _self._actor_id, 'forget_camera', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodForgetCameraResult] = _TypeAdapter(_models.RpcMethodForgetCameraResult)
+        return _adapter.validate_json(_json.dumps(_result), strict=True)
+
     def state(_self) -> _models.RpcMethodStateResult:
         """Invoke Site.state synchronously.
         
@@ -72,6 +79,13 @@ class AsyncStub:
         """Address an actor. An injected transport remains caller-owned."""
         self._actor_id = actor_id
         self._transport = transport if transport is not None else _default_async_client()
+
+    async def forget_camera(_self, camera_id: _models.RpcMethodForgetCameraParameter0) -> _models.RpcMethodForgetCameraResult:
+        """Drop a camera from the roll-up (test cleanup). It reappears on its next change."""
+        _args = _arguments([_argument(camera_id, _TypeAdapter(_models.RpcMethodForgetCameraParameter0))], [_UNSET])
+        _result = await _self._transport.invoke('Site', _self._actor_id, 'forget_camera', _args)
+        _adapter: _TypeAdapter[_models.RpcMethodForgetCameraResult] = _TypeAdapter(_models.RpcMethodForgetCameraResult)
+        return _adapter.validate_json(_json.dumps(_result), strict=True)
 
     async def state(_self) -> _models.RpcMethodStateResult:
         """Invoke Site.state asynchronously.

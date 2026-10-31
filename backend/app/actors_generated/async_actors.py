@@ -133,6 +133,11 @@ class Site:
 
     class Methods:
         """Argument tuples and return types for each actor RPC."""
+        class forget_camera:
+            """Drop a camera from the roll-up (test cleanup). It reappears on its next change."""
+            Args: _TypeAlias = _builtins.tuple[_models_1.RpcMethodForgetCameraParameter0]
+            Result: _TypeAlias = _models_1.RpcMethodForgetCameraResult
+
         class state:
             """Types for Site.state."""
             Args: _TypeAlias = _builtins.tuple[()]
