@@ -201,7 +201,7 @@ export function Analyze() {
                 {isImage ? (
                   <img src={videoUrl ?? ''} alt="Upload" className="size-full object-contain" />
                 ) : (
-                  <video ref={videoRef} src={videoUrl ?? undefined} controls muted playsInline autoPlay loop className="size-full object-contain" />
+                  <video ref={videoRef} src={phase === 'sampling' ? undefined : (videoUrl ?? undefined)} controls muted playsInline autoPlay loop className="size-full object-contain" />
                 )}
               </div>
               <div className="flex items-center gap-2 border-t border-line px-4 py-2 font-mono text-[11px] text-muted">

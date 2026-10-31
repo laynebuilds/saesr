@@ -33,6 +33,7 @@ export async function framesFromFile(file: File, count = 8): Promise<{ frames: F
     video.preload = 'auto'
     video.src = src
     await new Promise<void>((ok, fail) => {
+      setTimeout(() => fail(new Error('The browser took too long to read this video. Try a shorter or smaller clip.')), 30000)
       video.onloadeddata = () => ok()
       video.onerror = () => fail(new Error('This video format cannot be read by the browser. Try MP4 (H.264) or MOV.'))
     })
@@ -43,7 +44,11 @@ export async function framesFromFile(file: File, count = 8): Promise<{ frames: F
     for (let i = 0; i < n; i++) {
       const t = n === 1 ? d / 2 : d * (0.04 + (0.92 * i) / (n - 1))
       await new Promise<void>((ok) => {
-        video.onseeked = () => ok()
+        const done = setTimeout(ok, 4000) // a seek that never reports back cannot stall sampling
+        video.onseeked = () => {
+          clearTimeout(done)
+          ok()
+        }
         video.currentTime = t
       })
       frames.push(toFrame(video, video.videoWidth, video.videoHeight, t))
