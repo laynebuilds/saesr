@@ -154,7 +154,9 @@ def test_bus_events_become_one_incident_and_duplicates_are_noops():
         pump = asyncio.create_task(bridge.pump())
         await asyncio.sleep(0)
         await bus.publish(ev("e1"))
-        await bus.publish(ev("e1"))  # same event_id twice
+        await bus.publish(ev("e1"))  # same event_id twice: the bus drops it
+        await until(lambda: len(bridge.buffer) == 1)
+        bridge.enqueue(ev("e1"))  # a duplicate that got past the bus: the actor drops it
         await until(lambda: len(bridge.buffer) == 2)
         await drain(bridge, lambda: not bridge.buffer)
         pump.cancel()

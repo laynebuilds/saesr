@@ -401,7 +401,12 @@ def mock_machine_calls():
 # ---- admin: crash and replay ----------------------------------------------------------------
 
 
-def _kill_tree(pid: int, sig: int = signal.SIGKILL) -> list[int]:
+# SIGINT, not SIGKILL: after a SIGKILL each actor refuses calls for ~28 s until its old lock
+# expires; after SIGINT the restarted server serves recovered state in ~2 s. CRASH_HARD=1 forces SIGKILL.
+CRASH_SIGNAL = signal.SIGKILL if os.environ.get("CRASH_HARD") == "1" else signal.SIGINT
+
+
+def _kill_tree(pid: int, sig: int = CRASH_SIGNAL) -> list[int]:
     """Kill a process and its descendants (uv run spawns a child python)."""
     killed: list[int] = []
     try:
