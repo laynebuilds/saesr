@@ -165,7 +165,7 @@ async def run(client: Optional[httpx.AsyncClient] = None) -> None:
                 if not phones.get(role):
                     sent.add(key)
                     continue
-                if key.endswith(":recurring:manager") and _env("PHOTON_CALL") == "1":
+                if key.endswith(":recurring:manager") and (_env("CALL_MANAGER") or _env("PHOTON_CALL")) == "1":
                     asyncio.create_task(_call_manager(phones[role], key))
                 try:
                     if await photon.send(phones[role], text, key):

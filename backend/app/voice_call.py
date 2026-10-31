@@ -1,4 +1,5 @@
-"""Phone the floor manager with a short spoken briefing, over Photon's SIP voice calling.
+"""Phone the floor manager with a short spoken briefing: Vapi (hosted AI voice) when configured,
+else Photon's SIP voice calling.
 
 Used when a worker does not follow the coaching: the same violation repeats after the fix (incident
 status "recurring"). The call says, in a few words, who, what and what to do, then hangs up:
@@ -271,7 +272,48 @@ def place_call(to: str, text: str, line: Optional[str] = None) -> str:
     return SipCall(line, to, user, password).place(audio)
 
 
+# ---- Vapi (hosted AI voice calls) ------------------------------------------------------------------
+
+VAPI_URL = "https://api.vapi.ai/call"
+
+
+def vapi_body(to: str, text: str) -> dict:
+    """A transient assistant that speaks the briefing as its first line, then hangs up."""
+    return {
+        "phoneNumberId": _env("VAPI_PHONE_NUMBER_ID"),
+        "customer": {"number": to},
+        "assistant": {
+            "name": "saesr safety alert",
+            "firstMessage": text,
+            "firstMessageMode": "assistant-speaks-first",
+            "model": {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "system", "content": "You have just read a safety alert to a floor manager. "
+                              "Do not say anything else. End the call now."}],
+                "tools": [{"type": "endCall"}],
+            },
+            "endCallPhrases": ["Goodbye"],
+            "silenceTimeoutSeconds": 10,
+            "maxDurationSeconds": 40,
+        },
+    }
+
+
+async def vapi_call(to: str, text: str, client=None) -> str:
+    import httpx
+
+    async with (client or httpx.AsyncClient(timeout=20)) as c:
+        r = await c.post(VAPI_URL, headers={"authorization": f"Bearer {_env('VAPI_API_KEY')}"}, json=vapi_body(to, text))
+    if r.status_code >= 300:
+        return f"rejected_{r.status_code}: {r.text[:200]}"
+    return f"placed {r.json().get('id', '')}"
+
+
 async def call(to: str, text: str, line: Optional[str] = None) -> str:
+    """Vapi when VAPI_API_KEY and VAPI_PHONE_NUMBER_ID are set, else Photon SIP."""
+    if _env("VAPI_API_KEY") and _env("VAPI_PHONE_NUMBER_ID"):
+        return await vapi_call(to, text)
     return await asyncio.to_thread(place_call, to, text, line)
 
 
@@ -279,4 +321,4 @@ if __name__ == "__main__":
     import sys
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
-    print(place_call(sys.argv[1], sys.argv[2]))
+    print(asyncio.run(call(sys.argv[1], sys.argv[2])))

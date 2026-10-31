@@ -64,3 +64,23 @@ def test_send_finds_the_conversation_and_is_idempotent(monkeypatch):
 def test_off_without_keys(monkeypatch):
     monkeypatch.delenv("PHOTON_API_KEY", raising=False)
     assert not photon_alert.enabled()
+
+
+def test_vapi_call_speaks_the_briefing_then_hangs_up(monkeypatch):
+    from app import voice_call
+
+    monkeypatch.setenv("VAPI_API_KEY", "vk")
+    monkeypatch.setenv("VAPI_PHONE_NUMBER_ID", "pn1")
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req)
+        return httpx.Response(201, json={"id": "call_1"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    out = asyncio.run(voice_call.vapi_call("+12485550100", "Worker number 1. Goodbye.", client))
+    assert out == "placed call_1"
+    body = json.loads(seen[0].content)
+    assert seen[0].headers["authorization"] == "Bearer vk" and body["phoneNumberId"] == "pn1"
+    assert body["customer"] == {"number": "+12485550100"} and body["assistant"]["firstMessage"] == "Worker number 1. Goodbye."
+    assert {"type": "endCall"} in body["assistant"]["model"]["tools"] and body["assistant"]["maxDurationSeconds"] <= 60
