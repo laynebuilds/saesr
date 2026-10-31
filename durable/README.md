@@ -1,187 +1,316 @@
-# saesr durable actors
+# saesr durable actors (contract v2)
 
-The warehouse state behind saesr lives in [Durable Actors](https://github.com/TerseAI/durable-actors):
-one `Site` actor per warehouse and one `Camera` actor per camera feed, written in Python
-(`src/actors.py`). The FastAPI backend forwards every detected incident to them through a
-bridge (`backend/app/actors.py`), and dashboards subscribe to the `Site` over a WebSocket to get
-a fresh snapshot on every change.
+The live state behind saesr lives in [Durable Actors](https://github.com/TerseAI/durable-actors)
+(`src/actors.py`): one `Camera` actor per camera (`cam-01`, `cam-02`) and one `Site` actor
+(`site-demo`). The backend talks to them only through `backend/app/actors.py`; the relay talks to
+the backend; dashboards open WebSockets straight to the actors.
 
 ## Run it
 
-Requires Python 3.11+ and uv. No Bun needed: the Python CLI ships the native runtime.
+Requires Python 3.11+ and uv. No Bun needed.
 
 ```sh
-# terminal 1: actors server (state is kept in durable/.durable-actors/)
+# terminal 1: actors server (state kept in durable/.durable-actors/)
 cd durable
-uv run durable-actors dev                      # http://127.0.0.1:7100
+uv run durable-actors dev                              # http://127.0.0.1:7100
 
-# terminal 2: backend in mock mode with the bridge on
+# terminal 2: backend with the bridge on
 cd backend
-ACTORS_URL=http://127.0.0.1:7100 MODE=mock uv run --extra actors uvicorn app.main:app --port 8000
+ACTORS_URL=http://127.0.0.1:7100 RELAY_URL=http://127.0.0.1:8787 \
+  uv run --extra actors uvicorn app.main:app --port 8000
 
-# terminal 3: watch the live snapshots a dashboard would get
-cd durable
-PYTHONPATH=. uv run python scripts/watch_site.py demo-warehouse
+# terminal 3 (optional): watch the SiteState stream a dashboard gets
+cd durable && uv run python scripts/watch_site.py
 
-# inspect / observe
-uv run durable-actors inspect Site/demo-warehouse
-uv run durable-actors observe
+# inspect
+uv run durable-actors inspect Camera/cam-01
 ```
 
-Without `ACTORS_URL` the bridge is off and the backend behaves exactly as before.
+| Variable | Where | Default | Meaning |
+| --- | --- | --- | --- |
+| `ACTORS_URL` (or `DURABLE_ACTORS_CONTROL_PLANE_URL`) | backend | unset = bridge off | actors server |
+| `RELAY_URL` | backend | unset = relay calls stay pending (logged once) | relay base URL; the bridge POSTs `{RELAY_URL}/relay/start` |
+| `ACTORS_HEARTBEAT_S` | backend | `5` | heartbeat per camera |
+| `RELAY_DISPATCH_S` | backend | `1` | outbox poll interval (also woken right after any message that queues a call) |
+| `ACTORS_BUFFER_MAX` | backend | `1000` | detections held while the actors server is down (oldest dropped) |
+| `VERIFY_WINDOW_S` | actors server | `20` | verification window after the last action finishes |
+| `CAMERA_OFFLINE_S` | actors server | `15` | no heartbeat or detection for this long = offline |
+| `RECOVERING_S` | actors server | `3` | how long a reloaded camera shows `recovering` |
 
-Backend env:
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `ACTORS_URL` (or `DURABLE_ACTORS_CONTROL_PLANE_URL`) | unset = bridge off | actors server |
-| `SITE_ID` | `demo-warehouse` | Site actor id this backend reports to |
-| `ACTORS_BUFFER_MAX` | `1000` | events held while the actors server is down (oldest dropped beyond this) |
-| `ACTORS_HEARTBEAT_S` | `5` | camera heartbeat interval |
-
-Backend endpoints added: `GET /site` (Site snapshot; `source` is `actors`, or `local` when it
-falls back to computing from the bus) and `GET /actors/status` (bridge health: connected,
-buffered, sent, retries, drops).
-
-After changing an actor method or model, regenerate and vendor the client:
-`./scripts/sync_client.sh` (writes `durable/generated/` and copies it to `backend/app/actors_generated/`).
+After changing an actor method or model: `./scripts/sync_client.sh` (regenerates `generated/`
+and vendors it into `backend/app/actors_generated/`).
 
 ## The actor model
 
 ```
-  CV pipeline / mock
-        |  bus.publish(event)
+ CV worker / mock --bus--> backend/app/actors.py bridge --+-- Camera(cam).message(detection)    in order, buffered, retried
+                                                          +-- Camera(cam).message(heartbeat)    every 5 s
+                                                          +-- relay dispatcher: Camera.pending_relay() -> POST RELAY_URL/relay/start
+                                                          |                     2xx -> Camera.relay_delivered(id)
+ relay (Jas) --POST /internal/cameras/{id}/message--> actors.send(cam, ActorMessage) --> Camera(cam).message(...)
+
+ +----------------------------------------------------------------------+
+ | Camera "cam-01"   persisted CameraCore                                |
+ |   incidents (newest 50), counters, false_positives_filtered,         |
+ |   autonomous_fixes, seenEventIds (1000), version,                     |
+ |   outbox of pending relay calls (stable ids), delivered ids,          |
+ |   verification deadlines, last contact, boot id                      |
+ |   ONE durable alarm = earliest of: offline timeout, end of            |
+ |   recovering, any verification deadline                              |
+ +----------------------------------------------------------------------+
+        | on every change: broadcast CameraState to its sockets
+        | and Site("site-demo").update_camera(CameraState)
         v
-  backend/app/bus.py ----------------> /events/stream, /summary (unchanged)
-        |  open_subscription()
-        v
-  backend/app/actors.py (bridge)
-    bounded buffer, in-order delivery, retry with backoff, heartbeats
-        |                                     |
-        | Camera(cam).record(event, site)     | Camera(cam).heartbeat(fps, site)
-        v                                     v
-  +------------------------------------------------------+
-  | Camera "cam-1-loading-dock"   (one per camera)        |
-  |   persisted: status online/offline, fps,              |
-  |              last_frame_at, last_event, events_seen   |
-  |   durable alarm: no contact for 15s -> offline        |
-  +------------------------------------------------------+
-        | Site(site).record(event)            | Site(site).camera_changed(info)
-        v                                     v   (only on online/offline flips)
-  +------------------------------------------------------+
-  | Site "demo-warehouse"         (one per warehouse)     |
-  |   persisted: newest 1000 incidents (+ ack state),     |
-  |              seen ids (idempotency), lifetime counters |
-  |              by zone/camera/type/severity, camera     |
-  |              health, version                          |
-  |   computed: 24h compliance score, open alerts         |
-  |   record / acknowledge / snapshot / summary(hours)    |
-  +------------------------------------------------------+
-        | broadcast SiteMessage on every change
-        v
-  dashboard sockets (Jas), watch_site.py, anything else
+ +----------------------------------------------------------------------+
+ | Site "site-demo"  persisted latest CameraState per camera             |
+ |   broadcast SiteState (roll-up) to its sockets on every change        |
+ +----------------------------------------------------------------------+
 ```
 
-## Why actors
+- **One writer at a time.** No method is `@interleave`, so a detection, a relay update and an
+  approval for the same camera run one after another, each seeing the last commit. No locks, no
+  extra queues.
+- **Atomic, durable commits.** Persisted fields commit after each successful call; a failing call
+  rolls back. Killing the actors server loses nothing that was acknowledged.
+- **version** increments once per call that changes anything. A call that changes nothing
+  (duplicate event, re-sent update) leaves `version` alone and returns `changed: false`.
+- **Recovery.** The runtime has no rehydrate hook in 0.14.6, so each actor process gets a random
+  `BOOT_ID` at import, and the camera persists the boot id it last ran under. The first call in a
+  new process (any message, read, or the durable alarm) sees a different boot id: it sets
+  `recovered_from_version = version`, `status = "recovering"`, and an alarm flips it to `online`
+  `RECOVERING_S` later (or `offline` if no heartbeat arrived). After a SIGKILL, each actor answers
+  `unavailable` for a moment until its old owner lease expires; the bridge just retries.
 
-- **Serialized updates from many cameras.** Each actor instance runs one call at a time (no
-  method is `@interleave`). When every camera in a warehouse reports at once, their
-  `Site.record` calls queue at the Site and apply one after another, each seeing the state the
-  previous one committed. Counters never lose an increment and the incident list never drops a
-  concurrent append, with no locks or database transactions in our code.
-  `tests/test_live.py::test_concurrent_cameras_lose_no_updates` fires 10 cameras x 20 events
-  from 10 threads and checks every counter is exact (200 total, 20 per camera).
-- **Durable state across restarts.** Persisted fields commit atomically after each successful
-  call (a failed call rolls back). Killing and restarting the actors server keeps every
-  incident, counter, acknowledgement and camera status.
-- **Exactly-once effect over an unreliable link.** The bridge delivers at least once (it
-  retries, including after `outcome_unknown` where the call may already have run) and
-  `Site.record` is idempotent by event id, so a retry never double counts.
-- **Live fan-out.** The Site pushes a consistent snapshot to every connected socket on every
-  change. Dashboards never poll and never see half-applied state.
-- **Camera health without polling.** Each Camera arms a durable alarm on every contact; if
-  heartbeats stop, the runtime wakes it to mark itself offline and tell the Site, even if
-  nothing else ever calls it.
+## Camera state machine
 
-## Actor API
+Messages are `schema.ActorMessage` (`kind`: `detection | relay_update | action_update | approve | close | heartbeat`).
 
-`Site(id)`:
+**detection**
+- Dedupe by `event_id` (bounded memory of 1000): same id twice is a no-op.
+- `counters[type] += 1` for every new event, including `compliant_observation`.
+- `compliant_observation` never opens an incident. It resolves every `actioned` incident in the
+  same zone whose window is still open (`resolved`, `low_confidence: false`).
+- A violation matching an `actioned` incident (same type + zone, window open) makes it
+  `recurring`, appends the event id, records a trace entry, and queues an escalation relay call
+  (step `fixer`, `event.metrics.escalation = "recurring"`, outbox id `<incident>:fixer:r1`).
+- Otherwise a violation within 10 s of the last event of an open incident (status `verifying`,
+  `confirmed`, `unverified`, `awaiting_approval` or `recurring`, same type + zone) joins it.
+- Otherwise a new incident: id `inc-<event_id>`, status `verifying`, `keyframes`/`clip_url` from
+  the event, and a `triage` relay call is queued.
 
-| Method | Returns | Notes |
-| --- | --- | --- |
-| `record(event)` | `{event_id, duplicate, total}` | idempotent by `event.id` |
-| `acknowledge(event_id, by)` | `Incident` or `null` | `null` if unknown or already acknowledged |
-| `snapshot()` | `SiteSnapshot` | same object the socket sends |
-| `summary(hours=24)` | same shape as backend `GET /summary` (no `mode`) | over the stored newest 1000 incidents |
-| `camera_changed(info)` | | called by Camera actors |
+**Status flow**: `verifying -> confirmed | dismissed | unverified -> awaiting_approval (gated tier-2 action) -> actioned -> resolved | recurring -> closed`.
 
-`Camera(id)`: `heartbeat(fps, site)`, `record(event, site)` (forwards to `Site(site).record`),
-`get_status()`.
+**relay_update** stores `output` plus `status` under `incident.relay[step]`, appends `trace`
+(identical entries only once), then:
+- `triage`: `output.severity` (1..5, clamped) sets severity. If still `verifying`: status
+  `confirmed | dismissed | unverified` is applied as is, `failed` means `unverified`, anything
+  else (`done`) means `confirmed`. `dismissed` increments `false_positives_filtered` (once) and
+  stops the chain (pending calls for it are dropped).
+- Every step queues the next one: `triage -> coach -> fixer -> verifier -> reporter`. A failed
+  step still advances, so one bad agent never stalls the demo.
+- `fixer` completing may move the incident to `actioned` (below).
 
-Score: weights low 1, medium 3, high 5; `weighted_per_hour = sum(weights in window) / window_hours`;
-`score = clamp(100 - 2 * weighted_per_hour, 0, 100)`; window = oldest event in range to now,
-at least 1h, at most `hours`. Identical to `backend/app/main.py` `/summary`.
+**action_update** upserts by `action_id`:
+- An action already `done` or `rejected` is never changed again: re-sending is a no-op, nothing
+  is re-executed or counted twice. Re-sending an identical update is a no-op too.
+- Tier 2 (`slow_machine`) cannot become `approved` or `done` without an `approve` message; such an
+  update is stored as `awaiting_approval`. An `awaiting_approval` action moves the incident to
+  `awaiting_approval`.
+- `done` sets `executed_at` (if missing) and increments `autonomous_fixes` for tier 0, tier 1
+  (both run without a human) and approved tier 2.
+- When the `fixer` step has reported AND every action is `done | failed | rejected`, the incident
+  becomes `actioned` and `verify_until = now + VERIFY_WINDOW_S` opens the verification window.
 
-## Socket messages (for the dashboard)
+**approve** (`awaiting_approval` or `pending` action only; otherwise no-op): `status = approved`,
+`approved_by = user`, and queues a relay call to execute it: step `fixer` with `action` set,
+outbox id `<incident>:exec:<action_id>`.
 
-Get a socket grant from a backend route (TypeScript: `actors.Site.prepareWebsocket({actorId:
-"demo-warehouse", metadata: {name: "dashboard"}})`, Python: `async_actors.Site.prepare_websocket(...)`),
-then open `grant.websocketUrl`. Metadata is `{"name": "<viewer name>"}`.
+**close**: `status = closed`, `closed_at` set, pending relay calls for it dropped. Closing twice is a no-op.
 
-Every message the Site sends is JSON of this shape. It is always a full snapshot, so the client
-can just replace its state (drop messages whose `snapshot.version` is lower than the last one):
+**heartbeat**: `last_heartbeat = now`; `offline -> online`. The alarm marks the camera `offline`
+`CAMERA_OFFLINE_S` after the last heartbeat or detection.
+
+**Verification window timeout** (durable alarm, no caller needed): an `actioned` incident whose
+`verify_until` passes with neither a compliant observation nor a repeat becomes `resolved` with
+`low_confidence: true`.
+
+**compliance_score** (per camera, 0..100, one decimal): `100 - penalty`, severity defaults to 3
+until triage sets it:
+
+| incident status | penalty |
+| --- | --- |
+| verifying, confirmed, unverified, awaiting_approval | 4 x severity |
+| recurring | 8 x severity |
+| actioned (fix applied, being verified) | 2 x severity |
+| resolved | 2 x severity, fading linearly to 0 over 10 minutes |
+| dismissed, closed | 0 |
+
+Site roll-up: `site_score` = mean of camera scores, `active_incidents` = incidents not
+dismissed/resolved/closed across cameras, `autonomous_fixes` = sum.
+
+## Relay protocol (for Jas)
+
+### 1. The backend calls the relay
+
+For every pending outbox item the bridge sends:
+
+```
+POST {RELAY_URL}/relay/start
+Content-Type: application/json
+X-Idempotency-Key: inc-evt-123:triage
+```
 
 ```json
 {
-  "type": "snapshot",
-  "reason": "connect | refresh | recorded | acknowledged | camera",
-  "event_id": "evt_20261031_184936_2_0002",
-  "snapshot": {
-    "site": "demo-warehouse",
-    "version": 42,
-    "updated_at": "2026-10-31T18:49:36.912Z",
-    "total": 37,
-    "by_zone": {"loading-dock": 10},
-    "by_camera": {"cam-1-loading-dock": 10},
-    "by_type": {"unsafe_lift": 12},
-    "by_severity": {"high": 18, "medium": 11, "low": 8},
-    "compliance_score": 82.0,
-    "weighted_incidents_per_hour": 9.0,
-    "window_hours": 1.0,
-    "open_alerts_count": 37,
-    "open_alerts": [
-      {
-        "event": { "...": "SaesrEvent, see contract/event.schema.json" },
-        "recorded_at": "2026-10-31T18:49:36.900Z",
-        "acknowledged_by": null,
-        "acknowledged_at": null
-      }
-    ],
-    "recent": [ "same Incident shape, newest first, up to 20" ],
-    "cameras": {
-      "cam-1-loading-dock": {"camera": "cam-1-loading-dock", "online": true, "fps": 12.5, "last_seen_at": "..."}
-    }
-  }
+  "incident_id": "inc-evt-123",
+  "camera_id": "cam-01",
+  "step": "triage",
+  "event": {
+    "event_id": "evt-123", "site_id": "site-demo", "camera_id": "cam-01", "type": "unsafe_lift",
+    "confidence": 0.91, "timestamp": "2026-10-31T19:20:00Z", "zone_id": "zone-pack-line",
+    "bbox": [0.4, 0.2, 0.2, 0.5], "centroid": {"x": 0.5, "y": 0.45},
+    "metrics": {"torso_angle_deg": 62}, "keyframes": ["https://.../1.jpg", "https://.../2.jpg", "https://.../3.jpg"],
+    "clip_url": "https://.../clip.mp4"
+  },
+  "keyframes": ["https://.../1.jpg", "https://.../2.jpg", "https://.../3.jpg"],
+  "clip_url": "https://.../clip.mp4",
+  "action": null
 }
 ```
 
-- `total` and the `by_*` counters are lifetime totals. `compliance_score` and its inputs are the last 24h.
-- `open_alerts` holds the newest 50 unacknowledged incidents, newest first; `open_alerts_count` is exact.
-- `event_id` is set for `recorded` and `acknowledged`, null otherwise.
+- Answer **2xx as soon as you have accepted the job** (do the work async). Only then is the item
+  marked delivered. Anything else, or no answer, and it is resent on the next pass (every
+  ~1 s, backing off), including after a backend restart or an actors-server restart.
+- **Dedupe on `X-Idempotency-Key`** (the outbox id): the same key can arrive more than once (for
+  example the backend died after your 2xx but before it told the actor). If you have seen the
+  key, answer 2xx and do nothing.
+- Key shapes: `<incident>:<step>` (normal chain), `<incident>:fixer:r<N>` (recurring escalation N:
+  `event.metrics.escalation == "recurring"`; raise the supervisor alert + work order),
+  `<incident>:exec:<action_id>` (execute an approved gated action; `action` is set, `step` is `fixer`).
 
-The socket also accepts:
+### 2. The relay reports back
+
+`POST /internal/cameras/{camera_id}/message` on the backend with one `ActorMessage` per call
+(the backend route calls `actors.send(camera_id, msg)`). Every message is safe to resend.
+
+Triage result (status `confirmed | dismissed | unverified`, or `failed`):
 
 ```json
-{"type": "ack", "event_id": "evt_...", "by": "jas"}   // acknowledge; every socket gets the new snapshot
-{"type": "refresh"}                                   // this socket gets a fresh snapshot
+{"kind": "relay_update", "incident_id": "inc-evt-123", "step": "triage", "status": "confirmed",
+ "output": {"severity": 4, "reason": "back bent 62 degrees under load"},
+ "trace": {"agent": "triage", "model": "claude-...", "started_at": "2026-10-31T19:20:01Z",
+           "ended_at": "2026-10-31T19:20:03Z", "output_summary": "confirmed, severity 4"}}
 ```
 
-A raw text `ping` is answered `pong` by the gateway without waking the actor (keepalive).
-`GET /site` on the backend returns the same snapshot object plus `"source"`.
+Later steps (`coach`, `fixer`, `verifier`, `reporter`), status `done` or `failed`:
+
+```json
+{"kind": "relay_update", "incident_id": "inc-evt-123", "step": "coach", "status": "done",
+ "output": {"message": "Bend your knees..."}, "trace": {"agent": "coach", "started_at": "..."}}
+```
+
+The fixer reports each action it takes (send them as soon as you create them, `pending` first is fine):
+
+```json
+{"kind": "action_update", "incident_id": "inc-evt-123",
+ "action": {"action_id": "act-1", "incident_id": "inc-evt-123", "kind": "assign_coaching",
+            "status": "done", "params": {"worker": "W-12"}, "executed_at": "2026-10-31T19:20:05Z"}}
+```
+
+A gated tier-2 action is proposed, not executed:
+
+```json
+{"kind": "action_update", "incident_id": "inc-evt-123",
+ "action": {"action_id": "act-2", "incident_id": "inc-evt-123", "kind": "slow_machine",
+            "status": "awaiting_approval", "params": {"machine": "A", "pct": 50}}}
+```
+
+Then send the fixer's own `relay_update` (`step: "fixer"`, `status: "done"`). The incident goes
+`actioned` once the fixer step has reported and every action is finished, in either order.
+
+Dashboard approval (via the backend route) and the follow-up:
+
+```json
+{"kind": "approve", "incident_id": "inc-evt-123", "action_id": "act-2", "user": "jas"}
+```
+
+The relay then receives `/relay/start` with key `inc-evt-123:exec:act-2` and `action.status == "approved"`;
+after executing it sends the `action_update` with `status: "done"` (counted once, ever).
+
+Other messages: `{"kind": "close", "incident_id": "...", "reason": "handled"}`,
+`{"kind": "heartbeat", "fps": 12.0}`, `{"kind": "detection", "event": {...}}`.
+
+Full happy-path sequence for one incident:
+
+```
+actor  -> relay   start triage                   (inc:triage)
+relay  -> actor   relay_update triage confirmed
+actor  -> relay   start coach                    (inc:coach)
+relay  -> actor   relay_update coach done
+actor  -> relay   start fixer                    (inc:fixer)
+relay  -> actor   action_update act-1 done       (+ act-2 awaiting_approval if gated)
+relay  -> actor   relay_update fixer done
+actor  -> relay   start verifier                 (inc:verifier)
+             ... incident actioned once all actions finished: verification window opens
+relay  -> actor   relay_update verifier done
+actor  -> relay   start reporter                 (inc:reporter)
+relay  -> actor   relay_update reporter done
+camera -> actor   compliant_observation -> resolved | same violation -> recurring + (inc:fixer:r1) | timeout -> resolved low_confidence
+```
+
+## Dashboard sockets
+
+Get a grant from a backend route (it calls `actors.socket_grant("camera" | "site", actor_id)`), then
+open `websocketUrl` before `connectByMs`:
+
+```json
+{"websocketUrl": "ws://127.0.0.1:7100/v1/socket?key=...", "homeRegion": "...", "connectByMs": 1793474833558}
+```
+
+```js
+const ws = new WebSocket(grant.websocketUrl);
+ws.onmessage = (m) => { const s = JSON.parse(m.data); /* full state: replace, drop if older version */ };
+ws.send(JSON.stringify({type: "refresh"}));   // optional: get the state again
+ws.send("ping");                              // keepalive, answered "pong" without waking the actor
+```
+
+- A **Camera** socket receives a full `schema.CameraState` on connect and after every change
+  (`version` strictly increases; drop anything lower than what you have).
+- A **Site** socket (`site-demo`) receives a full `schema.SiteState` on connect and after every
+  camera change:
+
+```json
+{"site_id": "site-demo", "site_score": 90.0, "active_incidents": 2, "autonomous_fixes": 1,
+ "cameras": [
+   {"camera_id": "cam-01", "site_id": "site-demo", "status": "online", "last_heartbeat": "2026-10-31T19:20:05.120Z",
+    "version": 17, "recovered_from_version": null, "compliance_score": 92.0,
+    "counters": {"unsafe_lift": 3, "compliant_observation": 1}, "false_positives_filtered": 1, "autonomous_fixes": 1,
+    "incidents": [ { "incident_id": "inc-evt-123", "status": "actioned", "severity": 4, "event_ids": ["evt-123"],
+                     "relay": {"triage": {"status": "confirmed", "severity": 4}}, "actions": [ ... ],
+                     "trace": [ ... ], "verify_until": "2026-10-31T19:20:25.000Z", "low_confidence": false, "...": "..." } ]}
+ ]}
+```
+
+## Backend interface (`backend/app/actors.py`)
+
+`enabled()`, `start(cameras) -> Optional[Task]`, `stop()`, `async send(camera_id, msg) -> {"ok", "changed", "version", "state"} | {"ok": False, "error"}`,
+`async camera_state(cam)`, `async site_state()`, `async socket_grant(kind, actor_id)`,
+`open_state_subscription()` / `close_state_subscription(q)` (CameraState dicts, bounded,
+drop-oldest, once per camera version; fed by `send()` results and a backend socket per camera),
+`status()`.
+
+## Crash and recover demo
+
+1. Run the three terminals above; trigger an incident.
+2. `Ctrl-C` (or `kill -9`) the actors server mid-relay. The backend keeps serving; detections buffer.
+3. Restart `uv run durable-actors dev`. Within a few seconds the bridge reconnects, resends
+   buffered detections and any un-acknowledged relay calls (same `X-Idempotency-Key`), and the
+   camera shows `status: "recovering"` with `recovered_from_version`, then `online`.
 
 ## Tests
 
 ```sh
-cd durable && uv run pytest     # logic tests always; live tests need `durable-actors dev` running
-cd backend && uv run pytest tests/test_actors_bridge.py
+cd durable && uv run pytest        # logic + contract parity + live (spawns its own server, SIGKILLs and restarts it)
+cd backend && uv run --extra actors --group dev pytest -q tests/test_actors_*.py
+                                   # bridge vs the real state machine in-process; test_actors_live.py needs a server on :7100
 ```
