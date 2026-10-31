@@ -17,7 +17,8 @@ from typing import Optional
 
 from pydantic import ValidationError
 
-from ..schema import SaesrEvent
+from ..schema import Event
+from .config import severity_of
 
 EVENT_PREFIX = "saesr:event "
 ACTION_PREFIX = "saesr:action "
@@ -31,19 +32,19 @@ def _clock(ts: str) -> str:
         return ts
 
 
-def incident_text(event: SaesrEvent) -> str:
-    head = f"INCIDENT {event.severity.upper()} {event.type} | zone {event.zone} | {event.camera} | {_clock(event.timestamp)}"
-    detail = event.detail or event.type.replace("_", " ")
+def incident_text(event: Event) -> str:
+    head = f"INCIDENT {severity_of(event).upper()} {event.type} | zone {event.zone_id} | {event.camera_id} | {_clock(event.timestamp)}"
+    detail = event.metrics.get("detail") or event.type.replace("_", " ")
     if event.confidence is not None:
         detail += f" (confidence {event.confidence:.2f})"
     return f"{head}\n{detail}\n{EVENT_PREFIX}{event.model_dump_json()}"
 
 
-def parse_incident(text: str) -> Optional[SaesrEvent]:
+def parse_incident(text: str) -> Optional[Event]:
     for line in reversed(text.splitlines()):
         if line.startswith(EVENT_PREFIX):
             try:
-                return SaesrEvent.model_validate_json(line[len(EVENT_PREFIX):])
+                return Event.model_validate_json(line[len(EVENT_PREFIX):])
             except ValidationError:
                 return None
     return None
