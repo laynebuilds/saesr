@@ -302,10 +302,14 @@ drop-oldest, once per camera version; fed by `send()` results and a backend sock
 ## Crash and recover demo
 
 1. Run the three terminals above; trigger an incident.
-2. `Ctrl-C` (or `kill -9`) the actors server mid-relay. The backend keeps serving; detections buffer.
-3. Restart `uv run durable-actors dev`. Within a few seconds the bridge reconnects, resends
+2. `Ctrl-C` the actors server mid-relay. The backend keeps serving; detections buffer.
+3. Restart `uv run durable-actors dev`. About 2 s later the bridge has reconnected, resent the
    buffered detections and any un-acknowledged relay calls (same `X-Idempotency-Key`), and the
-   camera shows `status: "recovering"` with `recovered_from_version`, then `online`.
+   camera shows `status: "recovering"` with `recovered_from_version`, then `online` 3 s later.
+
+Use `Ctrl-C` (SIGINT/SIGTERM) on stage. After `kill -9` the state is just as safe, but each actor
+answers `unavailable` until its previous owner lease expires: measured ~28 s before the camera
+came back (vs 1.9 s after Ctrl-C). The bridge retries through it either way.
 
 ## Tests
 
