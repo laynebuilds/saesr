@@ -18,6 +18,6 @@ Any static host works. On Vercel: import this repo, framework preset "Other", no
 ## Notes
 
 - "Book a demo" buttons email layne0906@icloud.com (search `mailto:` in index.html to change).
-- "Open the live dashboard" in the closing section points to `http://localhost:5173`. Change it to the deployed dashboard URL before going live.
+- "View on GitHub" in the closing section links to github.com/laynebuilds/saesr.
 - Product screenshots in `assets/shots` were captured from the saesr dashboard on Oct 31 2026.
 - Footage and stills are Pexels-licensed; see `assets/CREDITS.md`.
