@@ -141,7 +141,8 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-full">
       <aside className={cn('sticky top-0 flex h-screen shrink-0 flex-col border-r border-line bg-card/60 backdrop-blur', collapsed ? 'w-16' : 'w-56')}>
-        <div className={cn('flex h-14 items-center gap-2.5 border-b border-line', collapsed ? 'justify-center' : 'px-4')}>
+        {/* the logo goes to the homepage (saesr.com when the dashboard is served at /demo) */}
+        <a href="/" title="saesr home" className={cn('flex h-14 items-center gap-2.5 border-b border-line hover:opacity-80', collapsed ? 'justify-center' : 'px-4')}>
           <span className="grid size-7 shrink-0 place-items-center rounded-md bg-fg font-mono text-xs font-bold text-bg">S</span>
           {!collapsed && (
             <div className="min-w-0 leading-tight">
@@ -149,7 +150,7 @@ export function Shell({ children }: { children: ReactNode }) {
               <div className="label !text-[9px] !tracking-[0.18em]">Safety command center</div>
             </div>
           )}
-        </div>
+        </a>
         <nav className="flex-1 space-y-0.5 p-2">
           {NAV.map((n) => (
             <NavLink
