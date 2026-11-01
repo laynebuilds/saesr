@@ -11,6 +11,8 @@ import { applySite, markDown, setState } from './store'
 import type { Source } from './source'
 
 const POLL_MS = 5000
+/** The public demo starts empty on every page load and shows what happens from then on. */
+const SESSION_START = Date.now() - 5000
 const AGENTS = ['triage', 'coach', 'fixer', 'verifier', 'reporter']
 const OPEN = new Set(['verifying', 'confirmed', 'unverified', 'awaiting_approval', 'actioned', 'recurring'])
 
@@ -81,6 +83,7 @@ async function load(): Promise<{ site: SiteState; activity: ActivityItem[] }> {
 
   const cams = new Map<string, Incident[]>()
   for (const r of incRows) {
+    if (Date.parse(String(r.opened_at)) < SESSION_START) continue
     const inc = toIncident(r, actionsBy.get(String(r.id)) ?? [], traceBy.get(String(r.id)) ?? [])
     cams.set(inc.camera_id, [...(cams.get(inc.camera_id) ?? []), inc])
   }
@@ -118,6 +121,7 @@ async function load(): Promise<{ site: SiteState; activity: ActivityItem[] }> {
 
   const label = new Map(incRows.map((r) => [String(r.id), `${String(r.type).replace(/_/g, ' ')} in ${String(r.zone_id ?? '').replace(/^zone-/, '').replace(/-/g, ' ')}`]))
   const activity: ActivityItem[] = traceRows
+    .filter((t) => Date.parse(String(t.started_at)) >= SESSION_START)
     .filter((t) => AGENTS.includes(String(t.agent)) || String(t.agent).startsWith('verif') || String(t.agent).startsWith('approv'))
     .map((t) => ({
       id: `trace-${t.id}`,

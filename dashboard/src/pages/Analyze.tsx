@@ -71,7 +71,7 @@ export function Analyze() {
   const [frames, setFrames] = useState<Frame[]>(kept.frames)
   const [dur, setDur] = useState<number | null>(kept.dur)
   const [note, setNote] = useState(kept.note)
-  const [phase, setPhase] = useState<Phase>(kept.phase === 'analyzing' || kept.phase === 'sampling' ? (kept.frames.length ? 'ready' : 'idle') : kept.phase)
+  const [phase, setPhase] = useState<Phase>(kept.phase === 'analyzing' || kept.phase === 'sampling' ? (kept.frames.length || kept.file ? 'ready' : 'idle') : kept.phase)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<Result | null>(kept.result)
   const [elapsed, setElapsed] = useState(0)
@@ -107,8 +107,13 @@ export function Analyze() {
       setDur(duration)
       setPhase('ready')
     } catch (e) {
-      setError((e as Error).message)
-      setPhase('error')
+      if (f.type.startsWith('video/')) {
+        setFrames([]) // the browser cannot read frames; Analyze still sends the video to the floor CV pipeline
+        setPhase('ready')
+      } else {
+        setError((e as Error).message)
+        setPhase('error')
+      }
     }
   }
 

@@ -50,7 +50,6 @@ const RequestSchema = z.object({
   video_url: z.string().url().max(500).optional(),
   frames: z
     .array(z.object({ t: z.number(), data: z.string().min(100) }))
-    .min(1)
     .max(MAX_FRAMES),
 })
 
@@ -109,6 +108,19 @@ export default async function handler(req: any, res: any) {
     input = RequestSchema.parse(typeof req.body === 'string' ? JSON.parse(req.body) : req.body)
   } catch (err) {
     return send(400, { error: `bad request: ${(err as Error).message}` })
+  }
+  if (!input.frames.length) {
+    if (!input.video_url) return send(400, { error: 'bad request: no frames and no video' })
+    const analysis = {
+      verdict: 'unclear' as const,
+      headline: 'Sent to the floor camera pipeline: pose detection is running on the full video now.',
+      violations: [],
+      compliant_observations: [],
+      people_visible: 0,
+      caveats: 'This browser could not read preview frames from the file, so only the floor CV pipeline reviews it. Watch Cameras and Incidents.',
+    }
+    const detection = await logDetection(input, analysis).catch((err) => ({ error: (err as Error).message }))
+    return send(200, { detection, analysis, model: 'vision model system', latency_ms: 0, input_tokens: 0, output_tokens: 0 })
   }
     const client = new Anthropic({ apiKey })
     const content: Anthropic.Beta.BetaContentBlockParam[] = []
