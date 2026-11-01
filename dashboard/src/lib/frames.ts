@@ -15,8 +15,21 @@ function toFrame(source: CanvasImageSource, w: number, h: number, t: number): Fr
   canvas.height = Math.round(h * scale)
   canvas.getContext('2d')!.drawImage(source, 0, 0, canvas.width, canvas.height)
   const url = canvas.toDataURL('image/jpeg', 0.8)
-  return { t, url, data: url.slice(url.indexOf(',') + 1) }
+  const frame = { t, url, data: url.slice(url.indexOf(',') + 1) }
+  const probe = document.createElement('canvas')
+  probe.width = probe.height = 16
+  const pc = probe.getContext('2d')!
+  pc.drawImage(canvas, 0, 0, 16, 16)
+  const px = pc.getImageData(0, 0, 16, 16).data
+  let sum = 0
+  for (let i = 0; i < px.length; i += 4) sum += px[i] + px[i + 1] + px[i + 2]
+  if (sum / (px.length / 4) / 3 < 6) dark.add(frame)
+  return frame
 }
+
+const dark = new WeakSet<Frame>()
+/** A frame that is (nearly) all black: the browser failed to decode it, not a dark scene. */
+const isBlack = (f: Frame) => dark.has(f)
 
 export async function framesFromFile(file: File, count = 8): Promise<{ frames: Frame[]; duration: number | null }> {
   const src = URL.createObjectURL(file)
@@ -28,14 +41,10 @@ export async function framesFromFile(file: File, count = 8): Promise<{ frames: F
       return { frames: [toFrame(img, img.naturalWidth, img.naturalHeight, 0)], duration: null }
     }
     const video = document.createElement('video')
-    video.dataset.saesrSampler = '1'
     video.muted = true
     video.playsInline = true
     video.preload = 'auto'
     video.src = src
-    Object.assign(video.style, { position: 'fixed', left: '-9999px', width: '2px', height: '2px', opacity: '0', pointerEvents: 'none' })
-    document.body.appendChild(video)
-    video.load()
     await new Promise<void>((ok, fail) => {
       setTimeout(() => fail(new Error('The browser took too long to read this video. Try a shorter or smaller clip.')), 30000)
       video.onloadeddata = () => ok()
@@ -58,9 +67,9 @@ export async function framesFromFile(file: File, count = 8): Promise<{ frames: F
       })
       frames.push(toFrame(video, video.videoWidth, video.videoHeight, t))
     }
+    if (frames.every(isBlack)) throw new Error('The browser returned blank frames for this video.')
     return { frames, duration: d }
   } finally {
-    document.querySelectorAll('video[data-saesr-sampler]').forEach((v) => v.remove())
     URL.revokeObjectURL(src)
   }
 }
